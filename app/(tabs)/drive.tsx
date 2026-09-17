@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Activity, CarFront, Check, MapPin, Pause, Radio, ShieldCheck, Volume2 } from 'lucide-react-native';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { AlertOverlay } from '@/components/AlertOverlay';
@@ -13,22 +13,37 @@ export default function Drive() {
   const { voiceGuidance } = useSettingsState();
   const { phase, distanceMeters, isRunning, start, stop } = useHazardSimulation(voiceGuidance);
   const [showRedAlert, setShowRedAlert] = useState(false);
+  const [hasDismissedCritical, setHasDismissedCritical] = useState(false);
+
+  useEffect(() => {
+    if (phase === 'critical') {
+      if (!hasDismissedCritical) {
+        setShowRedAlert(true);
+      }
+    } else {
+      setShowRedAlert(false);
+      setHasDismissedCritical(false);
+    }
+  }, [phase, hasDismissedCritical]);
 
   const handleToggle = () => {
     if (isRunning) {
       stop();
       setShowRedAlert(false);
+      setHasDismissedCritical(false);
     } else {
+      setHasDismissedCritical(false);
       start();
     }
   };
 
+  const handleDismissAlert = () => {
+    setShowRedAlert(false);
+    setHasDismissedCritical(true);
+  };
+
   const showCaution = phase === 'caution_500' || phase === 'caution_250' || phase === 'warning_100';
   const escalated = phase === 'warning_100';
-
-  if (phase === 'critical' && !showRedAlert) {
-    setShowRedAlert(true);
-  }
 
   const phaseLabel: Record<AlertPhase, string> = {
     idle: 'Waiting for movement',
@@ -103,7 +118,7 @@ export default function Drive() {
         </Text>
       </View>
 
-      <AlertOverlay visible={showRedAlert} onDismiss={() => setShowRedAlert(false)} />
+      <AlertOverlay visible={showRedAlert} onDismiss={handleDismissAlert} />
     </Screen>
   );
 }
