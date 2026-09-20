@@ -1,11 +1,16 @@
 ﻿import React, { useState } from 'react';
 import {
   Activity,
+  AlertCircle,
   AlertTriangle,
   ArrowDown,
   Bell,
+  Check,
   CheckCircle2,
+  ChevronDown,
+  ChevronUp,
   Clock3,
+  Compass,
   MapPin,
   Navigation,
   RotateCcw,
@@ -24,20 +29,26 @@ import {
 import { AlertOverlay } from '@/components/AlertOverlay';
 import { DrivingModeCard } from '@/components/DrivingModeCard';
 import { FeedbackSheet } from '@/components/FeedbackSheet';
+import { LiveSafetyAlertBanner } from '@/components/LiveSafetyAlertBanner';
 import { PermissionCard } from '@/components/PermissionCard';
+import { ReportConfirmationToast } from '@/components/ReportConfirmationToast';
 import { RiskMap } from '@/components/RiskMap';
 import { RouteSearchBar } from '@/components/RouteSearchBar';
 import { Screen } from '@/components/Screen';
+import { useRealDrivingCaution } from '@/hooks/useRealDrivingCaution';
+import { useAuth } from '@/lib/auth-provider';
 import { supabase } from '@/lib/supabase';
 import { colors, shadow } from '@/lib/theme';
 import {
   calculateHaversineDistance,
   RiskZoneService,
 } from '@/services/risk-zone-service';
-import { ResolvedLocation, RoutePlanResult } from '@/types/navigation';
+import { RoutingService } from '@/services/routing-service';
+import { DrivingRoute, ResolvedLocation, RoutePlanResult } from '@/types/navigation';
 import { RiskLevel, RiskZone } from '@/types/risk-zone';
 
 export default function Home() {
+  const { user } = useAuth();
   const [startLocation, setStartLocation] = useState<ResolvedLocation | null>(null);
   const [destinationLocation, setDestinationLocation] = useState<ResolvedLocation | null>(null);
   const [routePlan, setRoutePlan] = useState<RoutePlanResult | null>(null);
@@ -49,6 +60,32 @@ export default function Home() {
   const [feedback, setFeedback] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [tripId, setTripId] = useState<string | null>(null);
+  const [isCalculatingRoute, setIsCalculatingRoute] = useState(false);
+  const [routingError, setRoutingError] = useState<string | null>(null);
+  const [showTurnByTurn, setShowTurnByTurn] = useState(false);
+
+  // Live Location-Aware Driving Caution System
+  const {
+    activeAlert: cautionAlert,
+    dismissActiveAlert,
+    refreshSafetyData,
+  } = useRealDrivingCaution({
+    drivingRoute: routePlan?.drivingRoute,
+    autoStart: planned,
+  });
+
+  // Report Submission Confirmation Toast
+  const [toast, setToast] = useState<{
+    visible: boolean;
+    status: 'success' | 'error';
+    title: string;
+    message: string;
+  }>({
+    visible: false,
+    status: 'success',
+    title: '',
+    message: '',
+  });
 
   const requestPermission = async () => {
     if (Platform.OS === 'web' && typeof navigator !== 'undefined' && navigator.geolocation) {
@@ -71,30 +108,50 @@ export default function Home() {
   const handlePlanRoute = async (start: ResolvedLocation, dest: ResolvedLocation) => {
     setStartLocation(start);
     setDestinationLocation(dest);
+    setPlanned(true);
+    setIsCalculatingRoute(true);
+    setRoutingError(null);
+    setShowTurnByTurn(false);
 
-    // 1. Calculate straight-line geographic distance using Haversine formula
-    const distanceMeters = calculateHaversineDistance(
+    // Straight-line fallback distance for secondary geographic calculation
+    const straightDistanceMeters = calculateHaversineDistance(
       start.latitude,
       start.longitude,
       dest.latitude,
       dest.longitude
     );
-    const distanceKm = Number((distanceMeters / 1000).toFixed(1));
+    const approxKm = Number((straightDistanceMeters / 1000).toFixed(1));
 
-    // 2. Discover nearby risk zones using RiskZoneService.findNearbyZones around destination and start
-    const nearbyAroundDest = await RiskZoneService.findNearbyZones(dest.latitude, dest.longitude, 12000);
-    const nearbyAroundStart = await RiskZoneService.findNearbyZones(start.latitude, start.longitude, 8000);
+    // 1. Fetch Real Road Driving Route using OSRM
+    const routingResult = await RoutingService.getDrivingRoute(start, dest);
 
-    // Combine and deduplicate
-    const zoneMap = new Map<string, { zone: RiskZone; distanceMeters: number; isInsideZone: boolean }>();
-    [...nearbyAroundDest, ...nearbyAroundStart].forEach((item) => {
-      if (!zoneMap.has(item.zone.id)) {
-        zoneMap.set(item.zone.id, item);
-      }
-    });
-    const nearbyZones = Array.from(zoneMap.values());
+    // 2. Fetch all current risk zones to perform route corridor risk evaluation
+    const allZones = await RiskZoneService.getZones();
 
-    // 3. Determine highest nearby risk level
+    let nearbyZones: Array<{ zone: RiskZone; distanceMeters: number; isInsideZone: boolean }> = [];
+    let drivingDistKm: number | undefined;
+    let drivingDurMin: number | undefined;
+    let drivingRoute: DrivingRoute | null = null;
+    let status: 'found' | 'failed' = 'failed';
+
+    if (routingResult.success && routingResult.route) {
+      drivingRoute = routingResult.route;
+      drivingDistKm = routingResult.route.distanceKm;
+      drivingDurMin = routingResult.route.durationMinutes;
+      status = 'found';
+
+      // Correlate the entire road geometry with all known risk zones (1.5 km corridor buffer)
+      nearbyZones = RoutingService.findRiskZonesAlongRoute(
+        routingResult.route.coordinates,
+        allZones,
+        1500
+      );
+    } else {
+      status = 'failed';
+      setRoutingError(routingResult.error || 'Unable to calculate road route. Please try again.');
+    }
+
+    // 3. Determine highest risk level along the corridor
     const riskPriority: Record<RiskLevel, number> = {
       CRITICAL: 4,
       HIGH: 3,
@@ -110,47 +167,55 @@ export default function Home() {
     }
 
     // 4. Formulate contextual caution advice
-    let caution = 'Standard vigilance advised. Stay attentive to road signs and live hazard signals.';
+    let caution = 'Standard vigilance advised along this route. Stay attentive to road conditions.';
     const criticalZone = nearbyZones.find((z) => z.zone.risk_level === 'CRITICAL');
     const highZone = nearbyZones.find((z) => z.zone.risk_level === 'HIGH');
 
     if (criticalZone) {
-      caution = `High-risk corridor detected near ${criticalZone.zone.name} (${(criticalZone.distanceMeters / 1000).toFixed(1)} km away). ${criticalZone.zone.common_hazard}.`;
+      caution = `High-risk corridor detected near ${criticalZone.zone.name} (${(criticalZone.distanceMeters / 1000).toFixed(1)} km from route). ${criticalZone.zone.common_hazard}.`;
     } else if (highZone) {
-      caution = `Elevated risk sector near ${highZone.zone.name} (${(highZone.distanceMeters / 1000).toFixed(1)} km away). ${highZone.zone.common_hazard}.`;
+      caution = `Elevated risk sector near ${highZone.zone.name} (${(highZone.distanceMeters / 1000).toFixed(1)} km from route). ${highZone.zone.common_hazard}.`;
     }
 
     const planResult: RoutePlanResult = {
       startLocation: start,
       destinationLocation: dest,
-      approxGeographicDistanceKm: distanceKm,
-      approxGeographicDistanceMeters: distanceMeters,
+      approxGeographicDistanceKm: approxKm,
+      approxGeographicDistanceMeters: straightDistanceMeters,
+      drivingDistanceKm: drivingDistKm,
+      drivingDurationMinutes: drivingDurMin,
+      drivingRoute,
+      routeStatus: status,
+      errorMessage: routingResult.error,
       nearbyRiskZones: nearbyZones,
       highestNearbyRisk: highestRisk,
       cautionNotice: caution,
     };
+
     setRoutePlan(planResult);
+    setIsCalculatingRoute(false);
 
-    // 5. Persist trip to Supabase
-    const { data, error } = await supabase
-      .from('trips')
-      .insert({
-        start_point: start.name,
-        destination: dest.name,
-        distance_km: distanceKm,
-        duration_min: Math.max(12, Math.round(distanceKm * 2.1)),
-        risk_score: highestRisk.toLowerCase(),
-        green_pct: highestRisk === 'CRITICAL' ? 38 : highestRisk === 'HIGH' ? 52 : 78,
-        yellow_pct: highestRisk === 'CRITICAL' ? 32 : 30,
-        red_pct: highestRisk === 'CRITICAL' ? 30 : 18,
-      })
-      .select('id')
-      .maybeSingle();
+    // 5. Persist trip to Supabase if route found
+    if (status === 'found') {
+      const { data, error } = await supabase
+        .from('trips')
+        .insert({
+          start_point: start.name,
+          destination: dest.name,
+          distance_km: drivingDistKm ?? approxKm,
+          duration_min: drivingDurMin ?? Math.max(12, Math.round(approxKm * 2.1)),
+          risk_score: highestRisk.toLowerCase(),
+          green_pct: highestRisk === 'CRITICAL' ? 38 : highestRisk === 'HIGH' ? 52 : 78,
+          yellow_pct: highestRisk === 'CRITICAL' ? 32 : 30,
+          red_pct: highestRisk === 'CRITICAL' ? 30 : 18,
+        })
+        .select('id')
+        .maybeSingle();
 
-    if (!error && data?.id) {
-      setTripId(data.id);
+      if (!error && data?.id) {
+        setTripId(data.id);
+      }
     }
-    setPlanned(true);
   };
 
   const handleResetRoute = () => {
@@ -158,100 +223,122 @@ export default function Home() {
     setRoutePlan(null);
     setDestinationLocation(null);
     setTripId(null);
+    setRoutingError(null);
+    setIsCalculatingRoute(false);
+    setShowTurnByTurn(false);
   };
 
   const submitFeedback = async (
     rating: number,
     hazard: boolean,
     note: string,
-    audioUri?: string | null
+    audioUri?: string | null,
+    hazardType?: string
   ) => {
     setSubmitting(true);
-    const { error: fbError } = await supabase.from('route_feedback').insert({
-      trip_id: tripId,
-      safety_rating: rating,
-      reported_hazards: hazard,
-      confirmed_safe: !hazard,
-      feedback_note: note || null,
-    });
-    if (fbError) {
-      setSubmitting(false);
-      Alert.alert('Submission failed', 'Could not save your feedback. Please try again.');
-      return;
-    }
-
-    if (hazard) {
-      let uploadedAudioPath: string | null = null;
-
-      if (audioUri) {
-        try {
-          const response = await fetch(audioUri);
-          const blob = await response.blob();
-          const ext = audioUri.includes('.webm')
-            ? 'webm'
-            : audioUri.includes('.wav')
-            ? 'wav'
-            : 'm4a';
-          const fileName = `${Date.now()}_${Math.random().toString(36).substring(2, 8)}.${ext}`;
-          const storagePath = `reports/${fileName}`;
-
-          const { data: uploadData, error: uploadError } = await supabase.storage
-            .from('hazard-report-audio')
-            .upload(storagePath, blob, {
-              contentType: blob.type || (ext === 'webm' ? 'audio/webm' : 'audio/m4a'),
-              upsert: false,
-            });
-
-          if (uploadError) {
-            console.warn('Audio upload warning:', uploadError.message);
-          } else if (uploadData?.path) {
-            uploadedAudioPath = uploadData.path;
-          }
-        } catch (uploadEx: any) {
-          console.warn('Audio processing failed:', uploadEx?.message);
-        }
-      }
-
-      const { error: hzError } = await supabase.from('hazard_reports').insert({
-        trip_id: tripId || null,
-        hazard_type: 'other',
-        severity: 'yellow',
-        description:
-          note?.trim() ||
-          (uploadedAudioPath
-            ? 'Voice hazard report'
-            : 'User-reported hazard from post-trip feedback'),
-        zone_type: 'yellow',
-        status: 'pending',
-        audio_path: uploadedAudioPath,
-        latitude: destinationLocation?.latitude ?? userCoords?.latitude ?? null,
-        longitude: destinationLocation?.longitude ?? userCoords?.longitude ?? null,
+    try {
+      const { error: fbError } = await supabase.from('route_feedback').insert({
+        trip_id: tripId,
+        safety_rating: rating,
+        reported_hazards: hazard,
+        confirmed_safe: !hazard,
+        feedback_note: note || null,
       });
-      if (hzError) {
-        setSubmitting(false);
-        Alert.alert(
-          'Submission failed',
-          'Your feedback was saved but the hazard report could not be created. Please try again.'
-        );
+
+      if (fbError) {
+        setToast({
+          visible: true,
+          status: 'error',
+          title: '❌ Report Failed',
+          message: fbError.message || 'Could not save feedback. Please try again.',
+        });
         return;
       }
-    }
 
-    if (tripId) {
-      const { error: completeError } = await supabase.rpc('complete_trip', { p_trip_id: tripId });
-      if (completeError) {
-        setSubmitting(false);
-        Alert.alert(
-          'Trip completion issue',
-          'Your feedback was submitted, but we could not close the active trip. Please try again.'
-        );
-        return;
+      if (hazard) {
+        let uploadedAudioPath: string | null = null;
+
+        if (audioUri) {
+          try {
+            const response = await fetch(audioUri);
+            const blob = await response.blob();
+            const ext = audioUri.includes('.webm')
+              ? 'webm'
+              : audioUri.includes('.wav')
+              ? 'wav'
+              : 'm4a';
+            const fileName = `${Date.now()}_${Math.random().toString(36).substring(2, 8)}.${ext}`;
+            const storagePath = `reports/${fileName}`;
+
+            const { data: uploadData, error: uploadError } = await supabase.storage
+              .from('hazard-report-audio')
+              .upload(storagePath, blob, {
+                contentType: blob.type || (ext === 'webm' ? 'audio/webm' : 'audio/m4a'),
+                upsert: false,
+              });
+
+            if (!uploadError && uploadData?.path) {
+              uploadedAudioPath = uploadData.path;
+            }
+          } catch (uploadEx: any) {
+            console.warn('Audio processing failed:', uploadEx?.message);
+          }
+        }
+
+        const reportLat = destinationLocation?.latitude ?? userCoords?.latitude ?? 17.4485;
+        const reportLon = destinationLocation?.longitude ?? userCoords?.longitude ?? 78.3758;
+
+        const { error: hzError } = await supabase.from('hazard_reports').insert({
+          trip_id: tripId || null,
+          hazard_type: hazardType || 'other',
+          severity: 'yellow',
+          description:
+            note?.trim() ||
+            (uploadedAudioPath
+              ? 'Voice hazard report'
+              : 'User-reported hazard from post-trip feedback'),
+          zone_type: 'yellow',
+          status: 'pending',
+          audio_path: uploadedAudioPath,
+          latitude: reportLat,
+          longitude: reportLon,
+        });
+
+        if (hzError) {
+          setToast({
+            visible: true,
+            status: 'error',
+            title: '❌ Report Failed',
+            message: 'Feedback was saved but the hazard report could not be created. Please try again.',
+          });
+          return;
+        }
+
+        // Refresh live caution data so the new report is included
+        refreshSafetyData();
       }
-    }
 
-    setSubmitting(false);
-    setFeedback(false);
-    Alert.alert('Report received', 'Thanks for helping keep NearMiss accurate.');
+      if (tripId) {
+        await supabase.rpc('complete_trip', { p_trip_id: tripId });
+      }
+
+      setFeedback(false);
+      setToast({
+        visible: true,
+        status: 'success',
+        title: '✓ Report Submitted',
+        message: 'Thank you. Your safety report has been recorded.',
+      });
+    } catch (err: any) {
+      setToast({
+        visible: true,
+        status: 'error',
+        title: '❌ Report Failed',
+        message: 'An unexpected error occurred. Please try again.',
+      });
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   const getRiskBadgeColor = (risk?: RiskLevel) => {
@@ -269,14 +356,14 @@ export default function Home() {
 
   return (
     <Screen>
-      {/* App Header */}
+      {/* PHASE 1: App Header with TRAVEL SAFE */}
       <View style={styles.header}>
         <View>
-          <Text style={styles.greeting}>GOOD MORNING</Text>
+          <Text style={styles.greeting}>TRAVEL SAFE</Text>
           <Text style={styles.title}>Travel with clarity.</Text>
         </View>
         <View style={styles.avatar}>
-          <Text style={styles.avatarText}>NM</Text>
+          <Text style={styles.avatarText}>{user ? user.email?.slice(0, 2).toUpperCase() : 'NM'}</Text>
         </View>
       </View>
 
@@ -287,6 +374,12 @@ export default function Home() {
         onPlanRoute={handlePlanRoute}
         userCoords={userCoords}
         onRequestUserLocation={requestPermission}
+      />
+
+      {/* PHASE 2: Live Safety Alert Banner */}
+      <LiveSafetyAlertBanner
+        alert={cautionAlert}
+        onDismiss={dismissActiveAlert}
       />
 
       {!planned ? (
@@ -324,8 +417,27 @@ export default function Home() {
             </Pressable>
           </View>
 
+          {/* Loading State Banner */}
+          {isCalculatingRoute && (
+            <View style={styles.loadingRouteBanner}>
+              <Activity size={18} color={colors.teal} />
+              <Text style={styles.loadingRouteText}>Calculating safest route...</Text>
+            </View>
+          )}
+
+          {/* Error State Banner */}
+          {routingError && !isCalculatingRoute && (
+            <View style={styles.errorRouteBanner}>
+              <AlertCircle size={18} color={colors.red} />
+              <View style={{ flex: 1 }}>
+                <Text style={styles.errorRouteTitle}>Route Calculation Failed</Text>
+                <Text style={styles.errorRouteText}>{routingError}</Text>
+              </View>
+            </View>
+          )}
+
           {/* Planned Route Intelligence Card */}
-          {routePlan && (
+          {routePlan && !isCalculatingRoute && routePlan.routeStatus === 'found' && (
             <View style={[styles.routePlanCard, shadow]}>
               <View style={styles.trajectoryHeader}>
                 <View style={styles.trajectoryStep}>
@@ -338,9 +450,15 @@ export default function Home() {
                 <View style={styles.trajectoryConnector}>
                   <ArrowDown size={14} color={colors.muted} />
                   <View style={styles.distancePill}>
-                    <Text style={styles.distanceLabel}>Approx. geographic distance:</Text>
+                    <Text style={styles.distanceLabel}>Driving distance:</Text>
                     <Text style={styles.distanceVal}>
-                      {routePlan.approxGeographicDistanceKm} km
+                      {routePlan.drivingDistanceKm} km
+                    </Text>
+                  </View>
+                  <View style={styles.etaPill}>
+                    <Clock3 size={11} color={colors.teal} />
+                    <Text style={styles.etaVal}>
+                      ~{routePlan.drivingDurationMinutes} min
                     </Text>
                   </View>
                   <ArrowDown size={14} color={colors.muted} />
@@ -351,6 +469,15 @@ export default function Home() {
                   <Text style={styles.trajectoryLocName}>
                     {routePlan.destinationLocation.name}
                   </Text>
+                </View>
+              </View>
+
+              {/* Route Status Row */}
+              <View style={styles.statusRow}>
+                <Text style={styles.statusLabel}>ROUTE STATUS:</Text>
+                <View style={styles.statusBadge}>
+                  <Check size={12} color="#065F46" />
+                  <Text style={styles.statusText}>Route found</Text>
                 </View>
               </View>
 
@@ -378,21 +505,26 @@ export default function Home() {
                 </View>
               </View>
 
-              {/* Contextual Caution Notice */}
+              {/* Contextual Safety Advisory */}
               <View style={styles.cautionNoticeBox}>
-                <AlertTriangle size={15} color="#E65100" />
-                <Text style={styles.cautionNoticeText}>
-                  {routePlan.cautionNotice}
-                </Text>
+                <AlertTriangle size={16} color="#E65100" />
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.cautionNoticeHeader}>SAFETY ADVISORY</Text>
+                  <Text style={styles.cautionNoticeText}>
+                    {routePlan.cautionNotice}
+                  </Text>
+                </View>
               </View>
 
-              {/* Nearby Risk Zones along the trajectory */}
-              {routePlan.nearbyRiskZones.length > 0 && (
-                <View style={styles.nearbyZonesSection}>
-                  <Text style={styles.nearbyZonesTitle}>
-                    MONITORED RISK ZONES NEAR ROUTE ({routePlan.nearbyRiskZones.length})
-                  </Text>
-                  {routePlan.nearbyRiskZones.map(({ zone, distanceMeters }) => (
+              {/* Monitored Risk Zones along the road route */}
+              <View style={styles.nearbyZonesSection}>
+                <Text style={styles.nearbyZonesTitle}>
+                  RISK ZONES NEAR ROUTE ({routePlan.nearbyRiskZones.length})
+                </Text>
+                {routePlan.nearbyRiskZones.length === 0 ? (
+                  <Text style={styles.noZonesText}>No high-risk zones detected along this corridor.</Text>
+                ) : (
+                  routePlan.nearbyRiskZones.map(({ zone, distanceMeters }) => (
                     <View key={zone.id} style={styles.nearbyZoneRow}>
                       <View
                         style={[
@@ -414,34 +546,91 @@ export default function Home() {
                         {(distanceMeters / 1000).toFixed(1)} km away
                       </Text>
                     </View>
-                  ))}
+                  ))
+                )}
+              </View>
+
+              {/* Turn-by-Turn Navigation Accordion */}
+              {routePlan.drivingRoute && routePlan.drivingRoute.steps.length > 0 && (
+                <View style={styles.stepsSection}>
+                  <Pressable
+                    onPress={() => setShowTurnByTurn(!showTurnByTurn)}
+                    style={styles.stepsToggleBtn}
+                  >
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                      <Compass size={14} color={colors.teal} />
+                      <Text style={styles.stepsToggleText}>
+                        Turn-by-turn directions ({routePlan.drivingRoute.steps.length} steps)
+                      </Text>
+                    </View>
+                    {showTurnByTurn ? (
+                      <ChevronUp size={16} color={colors.muted} />
+                    ) : (
+                      <ChevronDown size={16} color={colors.muted} />
+                    )}
+                  </Pressable>
+
+                  {showTurnByTurn && (
+                    <View style={styles.stepsList}>
+                      {routePlan.drivingRoute.steps.map((step, idx) => (
+                        <View key={idx} style={styles.stepItem}>
+                          <View style={styles.stepNumberBadge}>
+                            <Text style={styles.stepNumberText}>{idx + 1}</Text>
+                          </View>
+                          <View style={{ flex: 1 }}>
+                            <Text style={styles.stepInstructionText}>{step.instruction}</Text>
+                            <Text style={styles.stepMetaText}>
+                              {step.distanceMeters > 1000
+                                ? `${(step.distanceMeters / 1000).toFixed(1)} km`
+                                : `${step.distanceMeters} m`}{' '}
+                              • {step.durationSeconds > 60 ? `${Math.round(step.durationSeconds / 60)} min` : `${step.durationSeconds}s`}
+                            </Text>
+                          </View>
+                        </View>
+                      ))}
+                    </View>
+                  )}
                 </View>
               )}
             </View>
           )}
 
-          {/* Active Risk Map showing Start, Destination, and connecting trajectory */}
+          {/* Active Risk Map showing Start, Destination, and Real Road Geometry */}
           <RiskMap
             startLocation={startLocation}
             destinationLocation={destinationLocation}
+            drivingRoute={routePlan?.drivingRoute}
+            routeStatus={isCalculatingRoute ? 'calculating' : routePlan?.routeStatus}
           />
 
           {/* Quick Metrics */}
           <View style={styles.stats}>
             <Stat
               icon={<Clock3 size={17} color={colors.teal} />}
-              value={routePlan ? `${Math.max(12, Math.round(routePlan.approxGeographicDistanceKm * 2.1))} min` : '24 min'}
-              label="estimated"
+              value={
+                routePlan?.drivingDurationMinutes
+                  ? `${routePlan.drivingDurationMinutes} min`
+                  : routePlan
+                  ? `${Math.max(12, Math.round(routePlan.approxGeographicDistanceKm * 2.1))} min`
+                  : '24 min'
+              }
+              label="driving time"
             />
             <Stat
               icon={<Activity size={17} color={colors.yellow} />}
-              value={routePlan ? `${routePlan.approxGeographicDistanceKm} km` : '12.4 km'}
-              label="straight-line"
+              value={
+                routePlan?.drivingDistanceKm
+                  ? `${routePlan.drivingDistanceKm} km`
+                  : routePlan
+                  ? `${routePlan.approxGeographicDistanceKm} km`
+                  : '12.4 km'
+              }
+              label="road distance"
             />
             <Stat
               icon={<Bell size={17} color={colors.red} />}
               value={`${routePlan ? routePlan.nearbyRiskZones.length : 3} alerts`}
-              label="near corridor"
+              label="corridor risks"
             />
           </View>
 
@@ -462,6 +651,15 @@ export default function Home() {
       )}
 
       <AlertOverlay visible={alert} onDismiss={() => setAlert(false)} />
+
+      {/* PHASE 4: Report Submission Confirmation Toast */}
+      <ReportConfirmationToast
+        visible={toast.visible}
+        status={toast.status}
+        title={toast.title}
+        message={toast.message}
+        onDismiss={() => setToast((prev) => ({ ...prev, visible: false }))}
+      />
     </Screen>
   );
 }
@@ -567,6 +765,44 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: '700',
   },
+  loadingRouteBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    backgroundColor: '#E0F2FE',
+    borderWidth: 1,
+    borderColor: '#BAE6FD',
+    padding: 14,
+    borderRadius: 14,
+    marginBottom: 14,
+  },
+  loadingRouteText: {
+    color: '#0369A1',
+    fontWeight: '700',
+    fontSize: 13,
+  },
+  errorRouteBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    backgroundColor: '#FEF2F2',
+    borderWidth: 1,
+    borderColor: '#FEE2E2',
+    padding: 14,
+    borderRadius: 14,
+    marginBottom: 14,
+  },
+  errorRouteTitle: {
+    color: '#991B1B',
+    fontWeight: '800',
+    fontSize: 13,
+  },
+  errorRouteText: {
+    color: '#B91C1C',
+    fontWeight: '600',
+    fontSize: 12,
+    marginTop: 2,
+  },
   routePlanCard: {
     backgroundColor: colors.surface,
     borderRadius: 20,
@@ -591,7 +827,8 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 8,
     marginLeft: 6,
-    marginVertical: 4,
+    marginVertical: 6,
+    flexWrap: 'wrap',
   },
   distancePill: {
     flexDirection: 'row',
@@ -599,7 +836,7 @@ const styles = StyleSheet.create({
     gap: 5,
     backgroundColor: colors.canvas,
     paddingHorizontal: 8,
-    paddingVertical: 3,
+    paddingVertical: 4,
     borderRadius: 6,
   },
   distanceLabel: {
@@ -609,8 +846,51 @@ const styles = StyleSheet.create({
   },
   distanceVal: {
     color: colors.teal,
+    fontSize: 12,
+    fontWeight: '900',
+  },
+  etaPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: '#E0F2FE',
+    paddingHorizontal: 7,
+    paddingVertical: 4,
+    borderRadius: 6,
+  },
+  etaVal: {
+    color: '#0369A1',
     fontSize: 11,
     fontWeight: '900',
+  },
+  statusRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 8,
+    borderTopWidth: 1,
+    borderTopColor: colors.line,
+  },
+  statusLabel: {
+    color: colors.muted,
+    fontSize: 10,
+    fontWeight: '800',
+    letterSpacing: 0.8,
+  },
+  statusBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: '#D1FAE5',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
+  },
+  statusText: {
+    color: '#065F46',
+    fontSize: 10,
+    fontWeight: '900',
+    letterSpacing: 0.5,
   },
   riskTierRow: {
     flexDirection: 'row',
@@ -641,7 +921,7 @@ const styles = StyleSheet.create({
   },
   cautionNoticeBox: {
     flexDirection: 'row',
-    alignItems: 'center',
+    alignItems: 'flex-start',
     gap: 8,
     backgroundColor: '#FFF8E1',
     padding: 10,
@@ -649,11 +929,17 @@ const styles = StyleSheet.create({
     marginTop: 4,
     marginBottom: 8,
   },
+  cautionNoticeHeader: {
+    color: '#E65100',
+    fontSize: 9,
+    fontWeight: '900',
+    letterSpacing: 0.8,
+    marginBottom: 2,
+  },
   cautionNoticeText: {
     color: '#8D6E63',
     fontSize: 11,
     fontWeight: '600',
-    flex: 1,
     lineHeight: 16,
   },
   nearbyZonesSection: {
@@ -668,6 +954,12 @@ const styles = StyleSheet.create({
     fontWeight: '900',
     letterSpacing: 1,
     marginBottom: 6,
+  },
+  noZonesText: {
+    color: colors.muted,
+    fontSize: 11,
+    fontStyle: 'italic',
+    paddingVertical: 4,
   },
   nearbyZoneRow: {
     flexDirection: 'row',
@@ -690,6 +982,62 @@ const styles = StyleSheet.create({
     color: colors.muted,
     fontSize: 11,
     fontWeight: '600',
+  },
+  stepsSection: {
+    marginTop: 8,
+    paddingTop: 8,
+    borderTopWidth: 1,
+    borderTopColor: colors.line,
+  },
+  stepsToggleBtn: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 6,
+  },
+  stepsToggleText: {
+    color: colors.teal,
+    fontSize: 11,
+    fontWeight: '800',
+  },
+  stepsList: {
+    marginTop: 8,
+    gap: 8,
+    maxHeight: 220,
+    overflow: 'scroll',
+    backgroundColor: colors.canvas,
+    borderRadius: 10,
+    padding: 10,
+  },
+  stepItem: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 8,
+  },
+  stepNumberBadge: {
+    width: 18,
+    height: 18,
+    borderRadius: 9,
+    backgroundColor: colors.tealSoft,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 2,
+  },
+  stepNumberText: {
+    color: colors.teal,
+    fontSize: 10,
+    fontWeight: '800',
+  },
+  stepInstructionText: {
+    color: colors.ink,
+    fontSize: 11,
+    fontWeight: '700',
+    lineHeight: 15,
+  },
+  stepMetaText: {
+    color: colors.muted,
+    fontSize: 10,
+    marginTop: 1,
   },
   stats: {
     backgroundColor: colors.surface,

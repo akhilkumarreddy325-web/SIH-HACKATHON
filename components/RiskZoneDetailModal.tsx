@@ -1,4 +1,4 @@
-﻿import React from 'react';
+﻿import React, { useState } from 'react';
 import {
   Activity,
   AlertTriangle,
@@ -34,44 +34,48 @@ export function RiskZoneDetailModal({
   onClose,
   userDistanceMeters,
 }: RiskZoneDetailModalProps) {
+  const [actionNotice, setActionNotice] = useState<string | null>(null);
+
   if (!zone) return null;
 
   const getRiskColor = (level: string) => {
     switch (level) {
       case 'CRITICAL':
-        return colors.red;
+        return '#991B1B';
       case 'HIGH':
-        return '#E65100'; // Deep amber/orange
+        return colors.red;
       case 'MODERATE':
         return colors.yellow;
+      case 'LOW':
       default:
         return colors.green;
     }
   };
 
-  const getRiskSoftBg = (level: string) => {
+  const getRiskBg = (level: string) => {
     switch (level) {
       case 'CRITICAL':
-        return colors.redSoft;
+        return '#FEE2E2';
       case 'HIGH':
-        return '#FFF3E0';
+        return colors.redSoft;
       case 'MODERATE':
         return colors.yellowSoft;
+      case 'LOW':
       default:
         return colors.greenSoft;
     }
   };
 
-  const formatDistance = (meters?: number | null) => {
-    if (meters === undefined || meters === null) return 'Location permission needed';
-    if (meters < 1000) return `${meters} m from you`;
-    return `${(meters / 1000).toFixed(1)} km from you`;
+  const formatDistance = (meters?: number | null): string => {
+    if (meters === undefined || meters === null) return 'Distance unavailable';
+    if (meters < 1000) return `${Math.round(meters)} m away`;
+    return `${(meters / 1000).toFixed(1)} km away`;
   };
 
   const formatHour = (hour: number) => {
     const period = hour >= 12 ? 'PM' : 'AM';
-    const h = hour % 12 === 0 ? 12 : hour % 12;
-    return `${h}:00 ${period}`;
+    const displayHour = hour % 12 === 0 ? 12 : hour % 12;
+    return `${displayHour}:00 ${period}`;
   };
 
   const currentHour = new Date().getHours();
@@ -81,13 +85,13 @@ export function RiskZoneDetailModal({
       : currentHour >= zone.high_risk_start_hour || currentHour <= zone.high_risk_end_hour;
 
   const riskColor = getRiskColor(zone.risk_level);
-  const riskBg = getRiskSoftBg(zone.risk_level);
+  const riskBg = getRiskBg(zone.risk_level);
 
   return (
     <Modal
       visible={visible}
       transparent
-      animationType="fade"
+      animationType="slide"
       onRequestClose={onClose}
     >
       <View style={styles.backdrop}>
@@ -96,32 +100,38 @@ export function RiskZoneDetailModal({
           <View style={styles.header}>
             <View style={styles.headerLeft}>
               <View style={[styles.iconWrap, { backgroundColor: riskBg }]}>
-                <ShieldAlert size={22} color={riskColor} />
+                <ShieldAlert size={24} color={riskColor} />
               </View>
               <View style={{ flex: 1 }}>
-                <Text style={styles.eyebrow}>ZONE INTELLIGENCE</Text>
-                <Text style={styles.title} numberOfLines={2}>
+                <Text style={styles.eyebrow}>RISK ZONE INTELLIGENCE</Text>
+                <Text style={styles.title} numberOfLines={1}>
                   {zone.name}
                 </Text>
               </View>
             </View>
-            <Pressable
-              onPress={onClose}
-              style={styles.closeBtn}
-              hitSlop={8}
-              accessibilityLabel="Close"
-            >
-              <X size={20} color={colors.muted} />
+            <Pressable onPress={onClose} style={styles.closeBtn} hitSlop={8}>
+              <X size={20} color={colors.ink} />
             </Pressable>
           </View>
 
-          <ScrollView style={styles.scroll} showsVerticalScrollIndicator={false}>
-            {/* Badges Row */}
+          {/* Action Notice Banner */}
+          {actionNotice && (
+            <View style={styles.noticeBanner}>
+              <Text style={styles.noticeText}>{actionNotice}</Text>
+            </View>
+          )}
+
+          <ScrollView
+            style={styles.scroll}
+            contentContainerStyle={{ paddingBottom: 16 }}
+            showsVerticalScrollIndicator={false}
+          >
+            {/* Risk Tier Badges */}
             <View style={styles.badgeRow}>
               <View style={[styles.badge, { backgroundColor: riskBg }]}>
                 <View style={[styles.dot, { backgroundColor: riskColor }]} />
                 <Text style={[styles.badgeText, { color: riskColor }]}>
-                  {zone.risk_level} RISK · {zone.numeric_score}/100
+                  {zone.risk_level} RISK • {zone.numeric_score}/100
                 </Text>
               </View>
 
@@ -140,7 +150,7 @@ export function RiskZoneDetailModal({
               </Text>
             </View>
 
-            {/* Description */}
+            {/* Description / Explanation */}
             {zone.description && (
               <Text style={styles.description}>{zone.description}</Text>
             )}
@@ -193,7 +203,7 @@ export function RiskZoneDetailModal({
                   )}
                 </View>
                 <Text style={styles.infoValue}>
-                  {formatHour(zone.high_risk_start_hour)} –{' '}
+                  {formatHour(zone.high_risk_start_hour)} -{' '}
                   {formatHour(zone.high_risk_end_hour)}
                 </Text>
               </View>
@@ -218,8 +228,33 @@ export function RiskZoneDetailModal({
             <View style={styles.geoBox}>
               <MapPin size={14} color={colors.muted} />
               <Text style={styles.geoText}>
-                Center: {zone.latitude.toFixed(4)}°N, {zone.longitude.toFixed(4)}°E · Radius: {zone.radius_meters}m
+                Center: {zone.latitude.toFixed(4)}°N, {zone.longitude.toFixed(4)}°E • Radius: {zone.radius_meters}m
               </Text>
+            </View>
+
+            {/* Interactive Actions (Placeholders) */}
+            <View style={styles.actionRow}>
+              <Pressable
+                onPress={() => {
+                  setActionNotice(`Safe routing active: Avoiding ${zone.name} corridor`);
+                  setTimeout(() => setActionNotice(null), 3500);
+                }}
+                style={[styles.subActionBtn, { backgroundColor: colors.redSoft, borderColor: colors.red }]}
+              >
+                <ShieldAlert size={15} color={colors.red} />
+                <Text style={[styles.subActionText, { color: colors.red }]}>Avoid this zone</Text>
+              </Pressable>
+
+              <Pressable
+                onPress={() => {
+                  setActionNotice(`Cautious guidance configured for ${zone.name}`);
+                  setTimeout(() => setActionNotice(null), 3500);
+                }}
+                style={[styles.subActionBtn, { backgroundColor: colors.tealSoft, borderColor: colors.teal }]}
+              >
+                <Navigation size={15} color={colors.teal} />
+                <Text style={[styles.subActionText, { color: colors.teal }]}>Navigate safely</Text>
+              </Pressable>
             </View>
           </ScrollView>
 
@@ -283,6 +318,19 @@ const styles = StyleSheet.create({
     padding: 6,
     borderRadius: 10,
     backgroundColor: colors.canvas,
+  },
+  noticeBanner: {
+    backgroundColor: colors.ink,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 8,
+    marginBottom: 10,
+  },
+  noticeText: {
+    color: '#fff',
+    fontSize: 12,
+    fontWeight: '700',
+    textAlign: 'center',
   },
   scroll: {
     marginVertical: 4,
@@ -427,6 +475,26 @@ const styles = StyleSheet.create({
   geoText: {
     color: colors.muted,
     fontSize: 11,
+  },
+  actionRow: {
+    flexDirection: 'row',
+    gap: 10,
+    marginTop: 10,
+    marginBottom: 6,
+  },
+  subActionBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    paddingVertical: 12,
+    borderRadius: 12,
+    borderWidth: 1,
+  },
+  subActionText: {
+    fontSize: 12,
+    fontWeight: '800',
   },
   actionBtn: {
     backgroundColor: colors.ink,

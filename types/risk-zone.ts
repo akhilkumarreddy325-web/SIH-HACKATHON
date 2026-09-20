@@ -23,8 +23,15 @@ export type RiskFactor = {
   is_active: boolean;
 };
 
+export type RiskZoneWeatherCondition =
+  | 'heavy_rain'
+  | 'waterlogging'
+  | 'poor_visibility'
+  | 'night_glare'
+  | 'normal';
+
 export type WeatherRiskPattern = {
-  condition: 'heavy_rain' | 'waterlogging' | 'poor_visibility' | 'night_glare' | 'normal';
+  condition: RiskZoneWeatherCondition;
   multiplier: number;
   advisory: string;
 };

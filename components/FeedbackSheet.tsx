@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+﻿import React, { useEffect, useState } from 'react';
 import {
   AlertCircle,
   Check,
@@ -9,6 +9,7 @@ import {
   Pause,
   Play,
   RotateCcw,
+  ShieldCheck,
   Square,
   Star,
   Trash2,
@@ -31,6 +32,51 @@ import {
 } from 'expo-audio';
 import { colors } from '@/lib/theme';
 
+export const REPORT_CATEGORIES = [
+  { id: 'accident', label: 'Accident' },
+  { id: 'road_damage', label: 'Road Damage' },
+  { id: 'flooding', label: 'Flooding' },
+  { id: 'unsafe_area', label: 'Unsafe Area' },
+  { id: 'traffic_hazard', label: 'Traffic Hazard' },
+  { id: 'debris', label: 'Debris' },
+  { id: 'construction', label: 'Construction' },
+  { id: 'streetlight_problem', label: 'Streetlight Problem' },
+  { id: 'other', label: 'Other Safety Issue' },
+] as const;
+
+export function validateHazardReportText(text: string): { isValid: boolean; error?: string } {
+  const trimmed = text.trim();
+  if (!trimmed || trimmed.length < 5) {
+    return {
+      isValid: false,
+      error: 'Please provide a clear description of the safety issue.',
+    };
+  }
+
+  const normalized = trimmed.toLowerCase();
+  const blockedSpam = new Set([
+    'hi', 'hello', 'hey', 'test', 'testing', 'abc', 'xyz', 'nothing',
+    'danger', 'asdf', 'none', 'ok', 'okay', '123', 'cool', 'good', 'bad'
+  ]);
+
+  if (blockedSpam.has(normalized)) {
+    return {
+      isValid: false,
+      error: 'Please provide a clear description of the safety issue.',
+    };
+  }
+
+  const distinctChars = new Set(normalized.replace(/[^a-z]/g, ''));
+  if (distinctChars.size < 3) {
+    return {
+      isValid: false,
+      error: 'Please provide a clear description of the safety issue.',
+    };
+  }
+
+  return { isValid: true };
+}
+
 export function FeedbackSheet({
   onSubmit,
 }: {
@@ -38,17 +84,21 @@ export function FeedbackSheet({
     rating: number,
     hazard: boolean,
     note: string,
-    audioUri?: string | null
+    audioUri?: string | null,
+    hazardType?: string
   ) => void;
 }) {
   const [rating, setRating] = useState(4);
   const [hazard, setHazard] = useState(false);
+  const [selectedCategory, setSelectedCategory] = useState<string>('road_damage');
   const [inputMode, setInputMode] = useState<'text' | 'voice'>('text');
   const [note, setNote] = useState('');
   const [recordedUri, setRecordedUri] = useState<string | null>(null);
   const [recordedDuration, setRecordedDuration] = useState<number>(0);
   const [submitting, setSubmitting] = useState(false);
+  const [termsAccepted, setTermsAccepted] = useState(true);
   const [permissionError, setPermissionError] = useState<string | null>(null);
+  const [validationError, setValidationError] = useState<string | null>(null);
 
   const recorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
   const recorderState = useAudioRecorderState(recorder, 200);
@@ -63,6 +113,7 @@ export function FeedbackSheet({
   const handleStartRecording = async () => {
     try {
       setPermissionError(null);
+      setValidationError(null);
       const perm = await requestRecordingPermissionsAsync();
       if (!perm.granted) {
         setPermissionError(
@@ -70,6 +121,8 @@ export function FeedbackSheet({
         );
         return;
       }
+      setRecordedUri(null);
+      setRecordedDuration(0);
       await recorder.prepareToRecordAsync();
       recorder.record();
     } catch (err: any) {
@@ -84,7 +137,7 @@ export function FeedbackSheet({
         setRecordedUri(recorder.uri);
       }
     } catch (err: any) {
-      console.warn('Error stopping recording:', err);
+      setPermissionError(err?.message || 'Could not stop recording.');
     }
   };
 
@@ -93,120 +146,157 @@ export function FeedbackSheet({
     setRecordedDuration(0);
   };
 
-  const handleSubmit = () => {
-    if (recorderState.isRecording) return;
-    setSubmitting(true);
-    onSubmit(rating, hazard, note, recordedUri);
-  };
+  const handleSubmit = async () => {
+    setValidationError(null);
 
-  const formatSeconds = (sec: number) => {
-    const totalSec = Math.floor(sec || 0);
-    const m = Math.floor(totalSec / 60);
-    const s = totalSec % 60;
-    return `${m}:${s < 10 ? '0' : ''}${s}`;
+    // Validate hazard report details
+    if (hazard) {
+      if (!termsAccepted) {
+        setValidationError('Please accept the reporting guidelines before submitting.');
+        return;
+      }
+
+      if (inputMode === 'voice' && !recordedUri) {
+        setValidationError('Please record a voice note or switch to text description.');
+        return;
+      }
+
+      if (inputMode === 'text') {
+        const valRes = validateHazardReportText(note);
+        if (!valRes.isValid) {
+          setValidationError(valRes.error || 'Please provide a clear description of the safety issue.');
+          return;
+        }
+      }
+    }
+
+    setSubmitting(true);
+    try {
+      await onSubmit(
+        rating,
+        hazard,
+        note,
+        recordedUri,
+        hazard ? selectedCategory : undefined
+      );
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   return (
     <View style={styles.sheet}>
       <View style={styles.handle} />
-      <Text style={styles.kicker}>TRIP COMPLETE</Text>
-      <Text style={styles.title}>How was the road?</Text>
+      <Text style={styles.kicker}>ROUTE VERIFICATION</Text>
+      <Text style={styles.title}>How did the road feel?</Text>
       <Text style={styles.subtitle}>
-        Your report helps make the next drive safer.
+        Calm drives start with real road feedback from travelers like you.
       </Text>
 
-      {/* Star Ratings */}
+      {/* Star Rating */}
       <View style={styles.stars}>
-        {[1, 2, 3, 4, 5].map((item) => (
-          <Pressable key={item} onPress={() => setRating(item)}>
+        {[1, 2, 3, 4, 5].map((s) => (
+          <Pressable key={s} onPress={() => setRating(s)} hitSlop={8}>
             <Star
-              size={27}
-              color={item <= rating ? colors.yellow : colors.line}
-              fill={item <= rating ? colors.yellow : 'transparent'}
+              size={30}
+              color={s <= rating ? colors.yellow : colors.line}
+              fill={s <= rating ? colors.yellow : 'transparent'}
             />
           </Pressable>
         ))}
       </View>
 
-      {/* Hazard Checkbox */}
+      {/* Hazard Toggle Button */}
       <Pressable
-        onPress={() => setHazard(!hazard)}
+        onPress={() => {
+          setHazard(!hazard);
+          setValidationError(null);
+        }}
         style={[styles.report, hazard && styles.reportActive]}
       >
-        <CircleAlert
-          size={19}
-          color={hazard ? colors.red : colors.muted}
-        />
+        <CircleAlert size={19} color={hazard ? colors.red : colors.muted} />
         <Text style={[styles.reportText, hazard && { color: colors.red }]}>
-          I noticed a new hazard
+          Report an unexpected safety hazard
         </Text>
         <View style={[styles.check, hazard && styles.checkActive]}>
-          {hazard && <Check size={13} color="#fff" />}
+          {hazard && <Check size={14} color="#fff" />}
         </View>
       </Pressable>
 
-      {/* Input Options when Hazard is checked */}
+      {/* Hazard Details Section */}
       {hazard && (
         <View style={styles.hazardInputSection}>
-          {/* Mode Selector */}
+          {/* Predefined Categories */}
+          <Text style={styles.categoryLabel}>SELECT HAZARD CATEGORY</Text>
+          <View style={styles.categoryGrid}>
+            {REPORT_CATEGORIES.map((cat) => {
+              const isSelected = selectedCategory === cat.id;
+              return (
+                <Pressable
+                  key={cat.id}
+                  onPress={() => setSelectedCategory(cat.id)}
+                  style={[styles.categoryChip, isSelected && styles.categoryChipActive]}
+                >
+                  <Text style={[styles.categoryChipText, isSelected && styles.categoryChipTextActive]}>
+                    {cat.label}
+                  </Text>
+                </Pressable>
+              );
+            })}
+          </View>
+
+          {/* Mode Switcher: Text vs Voice */}
           <View style={styles.modeTabs}>
             <Pressable
-              onPress={() => setInputMode('text')}
-              style={[
-                styles.modeTab,
-                inputMode === 'text' && styles.modeTabActive,
-              ]}
+              onPress={() => {
+                setInputMode('text');
+                setValidationError(null);
+              }}
+              style={[styles.modeTab, inputMode === 'text' && styles.modeTabActive]}
             >
-              <FileText
-                size={15}
-                color={inputMode === 'text' ? colors.ink : colors.muted}
-              />
-              <Text
-                style={[
-                  styles.modeTabText,
-                  inputMode === 'text' && styles.modeTabTextActive,
-                ]}
-              >
-                Text description
+              <FileText size={14} color={inputMode === 'text' ? colors.ink : colors.muted} />
+              <Text style={[styles.modeTabText, inputMode === 'text' && styles.modeTabTextActive]}>
+                Text note
               </Text>
             </Pressable>
-
             <Pressable
-              onPress={() => setInputMode('voice')}
-              style={[
-                styles.modeTab,
-                inputMode === 'voice' && styles.modeTabActive,
-              ]}
+              onPress={() => {
+                setInputMode('voice');
+                setValidationError(null);
+              }}
+              style={[styles.modeTab, inputMode === 'voice' && styles.modeTabActive]}
             >
-              <Mic
-                size={15}
-                color={inputMode === 'voice' ? colors.ink : colors.muted}
-              />
-              <Text
-                style={[
-                  styles.modeTabText,
-                  inputMode === 'voice' && styles.modeTabTextActive,
-                ]}
-              >
-                Voice recording {recordedUri ? '•' : ''}
+              <Mic size={14} color={inputMode === 'voice' ? colors.teal : colors.muted} />
+              <Text style={[styles.modeTabText, inputMode === 'voice' && styles.modeTabTextActive]}>
+                Voice report {recordedUri ? '• 1 recorded' : ''}
               </Text>
             </Pressable>
           </View>
 
-          {/* Text Input Mode */}
-          {inputMode === 'text' && (
-            <TextInput
-              value={note}
-              onChangeText={setNote}
-              placeholder="Tell us what you saw..."
-              placeholderTextColor={colors.muted}
-              style={styles.input}
-              multiline
-            />
+          {/* Validation Error Banner */}
+          {validationError && (
+            <View style={styles.errorBox}>
+              <AlertCircle size={15} color={colors.red} />
+              <Text style={styles.errorText}>{validationError}</Text>
+            </View>
           )}
 
-          {/* Voice Input Mode */}
-          {inputMode === 'voice' && (
+          {/* Text Input Mode */}
+          {inputMode === 'text' ? (
+            <TextInput
+              style={styles.input}
+              placeholder="e.g. Broken pavement and deep waterlogged pothole on the right lane near junction"
+              placeholderTextColor={colors.muted}
+              value={note}
+              onChangeText={(t) => {
+                setNote(t);
+                if (validationError) setValidationError(null);
+              }}
+              multiline
+              numberOfLines={3}
+            />
+          ) : (
+            /* Voice Recording Mode */
             <View style={styles.voiceContainer}>
               {permissionError && (
                 <View style={styles.errorBox}>
@@ -215,50 +305,37 @@ export function FeedbackSheet({
                 </View>
               )}
 
-              {/* State 1: Ready to Record */}
-              {!recorderState.isRecording && !recordedUri && (
-                <View style={styles.recordActionCard}>
-                  <Pressable
-                    onPress={handleStartRecording}
-                    style={styles.recordStartBtn}
-                  >
-                    <View style={styles.micCircle}>
-                      <Mic size={22} color="#fff" />
-                    </View>
-                    <View>
-                      <Text style={styles.recordStartTitle}>Tap to record</Text>
-                      <Text style={styles.recordStartSub}>
-                        Describe road conditions hands-free
+              {!recordedUri ? (
+                recorderState.isRecording ? (
+                  <View style={styles.recordingActiveCard}>
+                    <View style={styles.recordingPulse}>
+                      <View style={styles.redDot} />
+                      <Text style={styles.recordingTimer}>
+                        0:{recordedDuration < 10 ? `0${recordedDuration}` : recordedDuration}
                       </Text>
                     </View>
-                  </Pressable>
-                </View>
-              )}
-
-              {/* State 2: Actively Recording */}
-              {recorderState.isRecording && (
-                <View style={styles.recordingActiveCard}>
-                  <View style={styles.recordingPulse}>
-                    <View style={styles.redDot} />
-                    <Text style={styles.recordingTimer}>
-                      {formatSeconds(
-                        Math.floor((recorderState.durationMillis || 0) / 1000)
-                      )}
-                    </Text>
+                    <Text style={styles.recordingHint}>Recording safety memo...</Text>
+                    <Pressable onPress={handleStopRecording} style={styles.stopBtn}>
+                      <Square size={16} color="#fff" fill="#fff" />
+                      <Text style={styles.stopBtnText}>Stop recording</Text>
+                    </Pressable>
                   </View>
-                  <Text style={styles.recordingHint}>Recording audio...</Text>
-                  <Pressable
-                    onPress={handleStopRecording}
-                    style={styles.stopBtn}
-                  >
-                    <Square size={16} color="#fff" fill="#fff" />
-                    <Text style={styles.stopBtnText}>Stop recording</Text>
-                  </Pressable>
-                </View>
-              )}
-
-              {/* State 3: Recording Completed Preview */}
-              {!recorderState.isRecording && recordedUri && (
+                ) : (
+                  <View style={styles.recordActionCard}>
+                    <Pressable onPress={handleStartRecording} style={styles.recordStartBtn}>
+                      <View style={styles.micCircle}>
+                        <Mic size={22} color="#fff" />
+                      </View>
+                      <View style={{ flex: 1 }}>
+                        <Text style={styles.recordStartTitle}>Tap to speak road hazard</Text>
+                        <Text style={styles.recordStartSub}>
+                          Describe lane, obstacles, or safety risks hands-free
+                        </Text>
+                      </View>
+                    </Pressable>
+                  </View>
+                )
+              ) : (
                 <View style={styles.previewCard}>
                   <AudioPreviewPlayer
                     uri={recordedUri}
@@ -267,16 +344,29 @@ export function FeedbackSheet({
                     onReRecord={handleStartRecording}
                   />
                   <TextInput
+                    style={styles.optionalInput}
+                    placeholder="Add brief note or landmark (optional)"
+                    placeholderTextColor={colors.muted}
                     value={note}
                     onChangeText={setNote}
-                    placeholder="Optional: add any notes..."
-                    placeholderTextColor={colors.muted}
-                    style={styles.optionalInput}
                   />
                 </View>
               )}
             </View>
           )}
+
+          {/* Reporting Terms and Guidelines Notice */}
+          <Pressable
+            onPress={() => setTermsAccepted(!termsAccepted)}
+            style={styles.termsRow}
+          >
+            <View style={[styles.termsCheckbox, termsAccepted && styles.termsCheckboxActive]}>
+              {termsAccepted && <Check size={12} color="#fff" />}
+            </View>
+            <Text style={styles.termsText}>
+              I confirm this is genuine safety information. False, misleading, or spam reports will be rejected.
+            </Text>
+          </Pressable>
         </View>
       )}
 
@@ -445,6 +535,40 @@ const styles = StyleSheet.create({
   },
   hazardInputSection: {
     marginTop: 14,
+  },
+  categoryLabel: {
+    color: colors.muted,
+    fontSize: 10,
+    fontWeight: '900',
+    letterSpacing: 1,
+    marginBottom: 8,
+  },
+  categoryGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6,
+    marginBottom: 14,
+  },
+  categoryChip: {
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 8,
+    backgroundColor: colors.canvas,
+    borderWidth: 1,
+    borderColor: colors.line,
+  },
+  categoryChipActive: {
+    backgroundColor: colors.tealSoft,
+    borderColor: colors.teal,
+  },
+  categoryChipText: {
+    color: colors.muted,
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  categoryChipTextActive: {
+    color: colors.teal,
+    fontWeight: '800',
   },
   modeTabs: {
     flexDirection: 'row',
@@ -634,6 +758,34 @@ const styles = StyleSheet.create({
     fontSize: 12,
     marginTop: 10,
     color: colors.ink,
+  },
+  termsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    marginTop: 12,
+    padding: 10,
+    backgroundColor: colors.canvas,
+    borderRadius: 10,
+  },
+  termsCheckbox: {
+    width: 18,
+    height: 18,
+    borderRadius: 5,
+    borderWidth: 1.5,
+    borderColor: colors.line,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  termsCheckboxActive: {
+    backgroundColor: colors.teal,
+    borderColor: colors.teal,
+  },
+  termsText: {
+    color: colors.muted,
+    fontSize: 11,
+    lineHeight: 15,
+    flex: 1,
   },
   button: {
     backgroundColor: colors.teal,

@@ -4,9 +4,15 @@ import {
   RiskLevel,
   RiskScore,
   RiskZone,
+  RiskZoneWeatherCondition,
   WeatherRiskPattern,
 } from '@/types/risk-zone';
 import type { HazardReport } from '@/types/safepath';
+import {
+  CurrentWeatherData,
+  mapWeatherKeyToRiskZoneCondition,
+  mapWeatherToRiskZoneCondition,
+} from '@/services/weather-service';
 
 /**
  * ============================================================================
@@ -21,7 +27,7 @@ import type { HazardReport } from '@/types/safepath';
  * Modifiers:
  *   + Peak Time-of-Day Window: +15 points if current hour falls within [highRiskStartHour, highRiskEndHour].
  *   + Weather Vulnerability: +15 points if an active weather condition matches the zone's documented profile.
- *     (NOTE: Real-time weather APIs are deferred to a future phase; weather patterns currently serve as documented contextual vulnerability metadata).
+ *     (Deterministic evaluation mapped from WeatherService condition vocabulary).
  *
  * Score Range & Tier Thresholds:
  *   0  - 29 : LOW
@@ -59,7 +65,7 @@ export function calculateDeterministicRiskScore(params: {
   currentHour?: number;
   highRiskStartHour: number;
   highRiskEndHour: number;
-  activeWeatherCondition?: string;
+  activeWeatherCondition?: RiskZoneWeatherCondition | string;
   weatherPatterns?: WeatherRiskPattern[];
 }): RiskScore {
   const {
@@ -73,111 +79,109 @@ export function calculateDeterministicRiskScore(params: {
     weatherPatterns = [],
   } = params;
 
+  // 1. Base Score from safety signals
+  let score =
+    incidentCount * 5.0 +
+    nearMissCount * 2.5 +
+    communityReportCount * 1.5;
+
   const factors: RiskFactor[] = [];
 
-  // 1. Incident Contribution (5.0 pts each)
-  const incidentPts = incidentCount * 5.0;
   if (incidentCount > 0) {
     factors.push({
-      id: 'factor_incidents',
+      id: 'factor-incidents',
       category: 'incident_history',
-      name: 'Historical Incident Frequency',
-      description: `${incidentCount} recorded severe collisions/accidents in this sector.`,
-      weight: Math.round(incidentPts),
-      severity: incidentCount >= 7 ? 'critical' : incidentCount >= 4 ? 'high' : 'moderate',
+      name: 'Historical Collisions',
+      description: `${incidentCount} recorded incident(s) in this sector`,
+      weight: incidentCount * 5.0,
+      severity: incidentCount >= 8 ? 'critical' : incidentCount >= 5 ? 'high' : 'moderate',
       is_active: true,
     });
   }
 
-  // 2. Near-Miss Contribution (2.5 pts each)
-  const nearMissPts = nearMissCount * 2.5;
   if (nearMissCount > 0) {
     factors.push({
-      id: 'factor_near_miss',
+      id: 'factor-near-misses',
       category: 'near_miss_density',
-      name: 'Near-Miss Telemetry Density',
-      description: `${nearMissCount} sudden braking & near-collision events recorded.`,
-      weight: Math.round(nearMissPts),
-      severity: nearMissCount >= 12 ? 'high' : 'moderate',
+      name: 'Telemetric Near-Miss Events',
+      description: `${nearMissCount} rapid deceleration or avoidance events`,
+      weight: nearMissCount * 2.5,
+      severity: nearMissCount >= 15 ? 'critical' : nearMissCount >= 10 ? 'high' : 'moderate',
       is_active: true,
     });
   }
 
-  // 3. Crowdsourced Community Signals (1.5 pts each)
-  const communityPts = communityReportCount * 1.5;
   if (communityReportCount > 0) {
     factors.push({
-      id: 'factor_community',
+      id: 'factor-community-reports',
       category: 'community_signals',
-      name: 'Crowdsourced Hazard Signals',
-      description: `${communityReportCount} driver-reported obstacles (potholes, blockages, blind spots).`,
-      weight: Math.round(communityPts),
-      severity: communityReportCount >= 6 ? 'high' : 'low',
+      name: 'Crowdsourced Road Reports',
+      description: `${communityReportCount} active user-submitted hazard report(s)`,
+      weight: communityReportCount * 1.5,
+      severity: communityReportCount >= 8 ? 'high' : 'moderate',
       is_active: true,
     });
   }
 
-  // 4. Time-of-Day Risk Window (+15 pts if active)
+  // 2. Peak Hour Window Modifier (+15 pts)
   const isPeakHour = isHourInWindow(currentHour, highRiskStartHour, highRiskEndHour);
-  let timeOfDayPts = 0;
   if (isPeakHour) {
-    timeOfDayPts = 15;
     factors.push({
-      id: 'factor_tod',
+      id: 'factor-peak-hour',
       category: 'time_of_day',
-      name: 'Active Peak-Risk Time Window',
-      description: `Zone is currently within its historical peak-risk window (${highRiskStartHour}:00 - ${highRiskEndHour}:00).`,
+      name: 'Peak Traffic & Lighting Window',
+      description: `Elevated collision frequency observed between ${highRiskStartHour}:00 and ${highRiskEndHour}:00`,
       weight: 15,
       severity: 'high',
       is_active: true,
     });
+    score += 15;
   }
 
-  // 5. Weather Pattern Vulnerability (+15 pts if active condition matches)
-  let weatherPts = 0;
+  // 3. Weather Modifier (+15 pts if active weather matches zone profile)
   const matchingPattern = weatherPatterns.find((p) => p.condition === activeWeatherCondition);
   if (matchingPattern && activeWeatherCondition !== 'normal') {
-    weatherPts = 15;
     factors.push({
-      id: 'factor_weather',
+      id: 'factor-weather-vulnerability',
       category: 'weather_pattern',
-      name: 'Weather Condition Vulnerability',
+      name: `Weather Vulnerability (${matchingPattern.condition.replace('_', ' ')})`,
       description: matchingPattern.advisory,
       weight: 15,
       severity: 'high',
       is_active: true,
     });
+    score += 15;
   }
 
-  // Calculate Raw & Bounded Score
-  const rawScore = incidentPts + nearMissPts + communityPts + timeOfDayPts + weatherPts;
-  const numericScore = Math.min(100, Math.max(0, Math.round(rawScore)));
+  // Cap score strictly at 100
+  const numericScore = Math.min(100, Math.round(score));
   const level = getRiskLevelFromScore(numericScore);
 
-  // Confidence based on sample volume (asymptotic to 1.0 at 20+ signals)
-  const totalSignals = incidentCount + nearMissCount + communityReportCount;
-  const confidence = Math.min(1.0, Number((totalSignals / 20).toFixed(2)));
+  // Confidence metric based on signal volume (0.0 - 1.0)
+  const signalVolume = incidentCount + nearMissCount + communityReportCount;
+  const confidence = Math.min(1.0, Math.round((signalVolume / 25) * 100) / 100);
 
-  // Explainable Summary
-  let explanation = `Zone rated as ${level} risk (score ${numericScore}/100) based on ${incidentCount} historical incidents and ${nearMissCount} near-miss triggers.`;
+  // Deterministic textual explanation
+  const explanationParts: string[] = [
+    `Calculated risk score is ${numericScore}/100 (${level} tier) based on ${incidentCount} collision(s), ${nearMissCount} near-miss sensor trigger(s), and ${communityReportCount} verified crowd signal(s).`,
+  ];
   if (isPeakHour) {
-    explanation += ` Increased caution advised: currently in peak-risk hours (${highRiskStartHour}:00 - ${highRiskEndHour}:00).`;
+    explanationParts.push(`Includes +15 point modifier for active peak traffic window (${highRiskStartHour}:00 - ${highRiskEndHour}:00).`);
+  }
+  if (matchingPattern && activeWeatherCondition !== 'normal') {
+    explanationParts.push(`Includes +15 point modifier for active environmental profile matching (${matchingPattern.condition.replace('_', ' ')}).`);
   }
 
   return {
     numeric_score: numericScore,
     level,
     factors,
-    explanation,
+    explanation: explanationParts.join(' '),
     confidence,
     is_peak_hour: isPeakHour,
   };
 }
 
-/**
- * HAVERSINE DISTANCE FORMULA
- * Calculates geodesic distance between two coordinate pairs in meters.
- */
 export function calculateHaversineDistance(
   lat1: number,
   lon1: number,
@@ -325,8 +329,16 @@ export class RiskZoneService {
   public static hydrateZone(
     raw: RawZoneRecord,
     currentHour: number = new Date().getHours(),
-    weather: string = 'normal'
+    weather?: RiskZoneWeatherCondition | string,
+    weatherData?: CurrentWeatherData | null
   ): RiskZone {
+    let resolvedWeather: RiskZoneWeatherCondition = 'normal';
+    if (weatherData) {
+      resolvedWeather = mapWeatherToRiskZoneCondition(weatherData, raw.weather_patterns);
+    } else if (weather) {
+      resolvedWeather = mapWeatherKeyToRiskZoneCondition(weather, raw.weather_patterns);
+    }
+
     const computed = calculateDeterministicRiskScore({
       incidentCount: raw.incident_count,
       nearMissCount: raw.near_miss_count,
@@ -334,7 +346,7 @@ export class RiskZoneService {
       currentHour,
       highRiskStartHour: raw.high_risk_start_hour,
       highRiskEndHour: raw.high_risk_end_hour,
-      activeWeatherCondition: weather,
+      activeWeatherCondition: resolvedWeather,
       weatherPatterns: raw.weather_patterns,
     });
 
@@ -368,10 +380,11 @@ export class RiskZoneService {
    */
   public static getFallbackZones(
     currentHour?: number,
-    weather?: string
+    weather?: RiskZoneWeatherCondition | string,
+    weatherData?: CurrentWeatherData | null
   ): RiskZone[] {
     return DEMO_FALLBACK_ZONES.map((raw) =>
-      this.hydrateZone(raw, currentHour, weather)
+      this.hydrateZone(raw, currentHour, weather, weatherData)
     );
   }
 
@@ -382,10 +395,10 @@ export class RiskZoneService {
    */
   public static async getZones(options?: {
     currentHour?: number;
-    activeWeather?: string;
+    activeWeather?: RiskZoneWeatherCondition | string;
+    weatherData?: CurrentWeatherData | null;
   }): Promise<RiskZone[]> {
     const currentHour = options?.currentHour ?? new Date().getHours();
-    const weather = options?.activeWeather ?? 'normal';
 
     try {
       const { data, error } = await supabase
@@ -394,7 +407,7 @@ export class RiskZoneService {
         .order('id', { ascending: true });
 
       if (error || !data || data.length === 0) {
-        return this.getFallbackZones(currentHour, weather);
+        return this.getFallbackZones(currentHour, options?.activeWeather, options?.weatherData);
       }
 
       return data.map((row: any) =>
@@ -419,11 +432,12 @@ export class RiskZoneService {
             updated_at: row.updated_at,
           },
           currentHour,
-          weather
+          options?.activeWeather,
+          options?.weatherData
         )
       );
     } catch {
-      return this.getFallbackZones(currentHour, weather);
+      return this.getFallbackZones(currentHour, options?.activeWeather, options?.weatherData);
     }
   }
 
@@ -432,7 +446,11 @@ export class RiskZoneService {
    */
   public static async getZoneById(
     id: string,
-    options?: { currentHour?: number; activeWeather?: string }
+    options?: {
+      currentHour?: number;
+      activeWeather?: RiskZoneWeatherCondition | string;
+      weatherData?: CurrentWeatherData | null;
+    }
   ): Promise<RiskZone | undefined> {
     const zones = await this.getZones(options);
     return zones.find((z) => z.id === id);
@@ -445,7 +463,11 @@ export class RiskZoneService {
     latitude: number,
     longitude: number,
     maxDistanceMeters: number = 5000,
-    options?: { currentHour?: number; activeWeather?: string }
+    options?: {
+      currentHour?: number;
+      activeWeather?: RiskZoneWeatherCondition | string;
+      weatherData?: CurrentWeatherData | null;
+    }
   ): Promise<Array<{ zone: RiskZone; distanceMeters: number; isInsideZone: boolean }>> {
     const zones = await this.getZones(options);
 
@@ -481,13 +503,20 @@ export class RiskZoneService {
     liveReports: HazardReport[],
     options?: {
       currentHour?: number;
-      activeWeatherCondition?: string;
+      activeWeatherCondition?: RiskZoneWeatherCondition | string;
+      weatherData?: CurrentWeatherData | null;
       onlyNewSinceBaseline?: boolean;
     }
   ): RiskZone {
     const currentHour = options?.currentHour ?? new Date().getHours();
-    const activeWeather = options?.activeWeatherCondition ?? 'normal';
     const onlyNewSinceBaseline = options?.onlyNewSinceBaseline ?? true;
+
+    let activeWeather: RiskZoneWeatherCondition = 'normal';
+    if (options?.weatherData) {
+      activeWeather = mapWeatherToRiskZoneCondition(options.weatherData, zone.weather_patterns);
+    } else if (options?.activeWeatherCondition) {
+      activeWeather = mapWeatherKeyToRiskZoneCondition(options.activeWeatherCondition, zone.weather_patterns);
+    }
 
     // 1. Spatially filter reports within this zone's radius
     const matchingReports = liveReports.filter((report) => {
