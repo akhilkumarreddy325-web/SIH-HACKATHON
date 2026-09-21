@@ -446,6 +446,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       const code = err?.code || '';
       const msg = (err?.message || '').toLowerCase();
 
+      if (msg.includes('region enabled') || msg.includes('sms unable to be sent') || msg.includes('region')) {
+        return {
+          success: false,
+          error:
+            'SMS Region restricted by Google: Go to Firebase Console -> Authentication -> Settings -> SMS Region Policy and enable India (+91), or add your number under Phone -> Test Numbers in Firebase.',
+        };
+      }
+
       if (code === 'auth/operation-not-allowed' || msg.includes('operation_not_allowed')) {
         return {
           success: false,
