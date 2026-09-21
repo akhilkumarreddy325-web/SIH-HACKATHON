@@ -1,4 +1,4 @@
-﻿import { initializeApp, getApps, getApp } from 'firebase/app';
+import { initializeApp, getApps, getApp } from 'firebase/app';
 import {
   getAuth,
   GoogleAuthProvider,
@@ -6,6 +6,9 @@ import {
   signOut as firebaseSignOut,
   onAuthStateChanged,
   User as FirebaseUser,
+  RecaptchaVerifier,
+  signInWithPhoneNumber,
+  ConfirmationResult,
 } from 'firebase/auth';
 
 const firebaseConfig = {
@@ -23,5 +26,54 @@ export const auth = getAuth(app);
 export const googleProvider = new GoogleAuthProvider();
 googleProvider.setCustomParameters({ prompt: 'select_account' });
 
-export { signInWithPopup, firebaseSignOut, onAuthStateChanged };
-export type { FirebaseUser };
+/**
+ * Initializes or resets an invisible reCAPTCHA verifier for Firebase Phone Auth
+ */
+export function initRecaptchaVerifier(containerId: string = 'recaptcha-container'): RecaptchaVerifier | null {
+  if (typeof window === 'undefined') return null;
+
+  let container = document.getElementById(containerId);
+  if (!container) {
+    container = document.createElement('div');
+    container.id = containerId;
+    document.body.appendChild(container);
+  }
+
+  if ((window as any).recaptchaVerifier) {
+    try {
+      (window as any).recaptchaVerifier.clear();
+    } catch (e) {
+      console.warn('Error clearing existing recaptchaVerifier:', e);
+    }
+    (window as any).recaptchaVerifier = null;
+  }
+
+  try {
+    const verifier = new RecaptchaVerifier(auth, containerId, {
+      size: 'invisible',
+      callback: () => {},
+      'expired-callback': () => {
+        if ((window as any).recaptchaVerifier) {
+          try {
+            (window as any).recaptchaVerifier.clear();
+          } catch {}
+          (window as any).recaptchaVerifier = null;
+        }
+      },
+    });
+    (window as any).recaptchaVerifier = verifier;
+    return verifier;
+  } catch (err) {
+    console.error('Failed to create RecaptchaVerifier:', err);
+    return null;
+  }
+}
+
+export {
+  signInWithPopup,
+  firebaseSignOut,
+  onAuthStateChanged,
+  RecaptchaVerifier,
+  signInWithPhoneNumber,
+};
+export type { FirebaseUser, ConfirmationResult };

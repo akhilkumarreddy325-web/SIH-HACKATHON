@@ -1,4 +1,4 @@
-﻿import React, { useState } from 'react';
+import React, { useState } from 'react';
 import {
   Activity,
   AlertCircle,
@@ -48,7 +48,7 @@ import { DrivingRoute, ResolvedLocation, RoutePlanResult } from '@/types/navigat
 import { RiskLevel, RiskZone } from '@/types/risk-zone';
 
 export default function Home() {
-  const { user } = useAuth();
+  const { user, profile } = useAuth();
   const [startLocation, setStartLocation] = useState<ResolvedLocation | null>(null);
   const [destinationLocation, setDestinationLocation] = useState<ResolvedLocation | null>(null);
   const [routePlan, setRoutePlan] = useState<RoutePlanResult | null>(null);
@@ -363,7 +363,7 @@ export default function Home() {
           <Text style={styles.title}>Travel with clarity.</Text>
         </View>
         <View style={styles.avatar}>
-          <Text style={styles.avatarText}>{user ? user.email?.slice(0, 2).toUpperCase() : 'NM'}</Text>
+          <Text style={styles.avatarText}>{profile?.name ? profile.name.slice(0, 2).toUpperCase() : (user?.email ? user.email.slice(0, 2).toUpperCase() : 'NM')}</Text>
         </View>
       </View>
 

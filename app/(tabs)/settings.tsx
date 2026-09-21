@@ -1,4 +1,4 @@
-﻿import { useState } from 'react';
+import { useState } from 'react';
 import {
   Bell,
   CheckCircle,
@@ -71,7 +71,7 @@ export default function Settings() {
                   <Text style={styles.verifiedText}>Verified</Text>
                 </View>
               </View>
-              <Text style={styles.profileEmail}>{profile?.email || profile?.phone || "Account Verified"}</Text>
+              <Text style={styles.profileEmail}>{profile?.phone || (profile?.email?.includes('@mobile.nearmiss.com') ? null : profile?.email) || "Account Verified"}</Text>
               <Text style={styles.profileMeta}>Isolated Account &bull; Private Safety Data</Text>
             </View>
           </View>

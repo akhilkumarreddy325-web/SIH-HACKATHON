@@ -185,7 +185,8 @@ export function AuthModal() {
 
     if (res.success) {
       setIsOtpSent(true);
-      setSuccessMessage(`Verification code sent to ${fullPhone}`);
+      setOtpCode('');
+      setSuccessMessage(`Original SMS OTP sent to ${fullPhone}! Please enter the 6-digit code received.`);
     } else {
       setErrorMessage(res.error || 'Failed to send OTP.');
     }
@@ -565,6 +566,10 @@ export function AuthModal() {
                     </Text>
                   )}
                 </Pressable>
+
+                <Text style={styles.demoNote}>
+                  A 6-digit SMS verification code will be sent to your mobile phone.
+                </Text>
               </View>
             )}
 
@@ -914,6 +919,13 @@ const styles = StyleSheet.create({
   guestBtn: {
     paddingVertical: 6,
     paddingHorizontal: 16,
+  },
+  demoNote: {
+    fontSize: 11,
+    color: colors.muted,
+    textAlign: 'center',
+    marginTop: 8,
+    fontWeight: '500',
   },
   guestBtnText: {
     color: colors.muted,

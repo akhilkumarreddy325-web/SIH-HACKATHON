@@ -8,6 +8,9 @@ import {
   signInWithPopup as firebaseSignInWithPopup,
   firebaseSignOut,
   onAuthStateChanged as onFirebaseAuthStateChanged,
+  initRecaptchaVerifier,
+  signInWithPhoneNumber,
+  ConfirmationResult,
 } from '@/lib/firebase';
 
 export interface UserProfile {
@@ -168,9 +171,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       setUser({
         id: stored.id,
         email: stored.email,
+        phone: stored.phone,
         aud: 'authenticated',
-        app_metadata: {},
-        user_metadata: { full_name: stored.name, avatar_url: stored.avatarUrl },
+        app_metadata: { provider: stored.phone ? 'phone' : 'email' },
+        user_metadata: { full_name: stored.name, avatar_url: stored.avatarUrl, phone: stored.phone },
         created_at: stored.createdAt || new Date().toISOString(),
       } as any);
       setIsGuest(false);
@@ -399,74 +403,187 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const dummyEndOfOldMethods = async () => {
   };
 
-  // MOBILE OTP - SEND OTP
+  // REAL FIREBASE PHONE AUTH - SEND ORIGINAL SMS OTP
   const signInWithPhone = async (phone: string) => {
     try {
-      const { error } = await supabase.auth.signInWithOtp({
-        phone: phone.trim(),
-      });
+      const clean = phone.trim().replace(/[^0-9+]/g, '');
+      const digitsOnly = clean.replace(/[^0-9]/g, '');
+      if (digitsOnly.length < 10) {
+        return {
+          success: false,
+          error: 'Please enter a valid 10-digit mobile number.',
+        };
+      }
 
-      if (error) {
-        const msg = error.message.toLowerCase();
-        if (
-          msg.includes('sms provider') ||
-          msg.includes('provider is not enabled') ||
-          msg.includes('phone provider') ||
-          msg.includes('unsupported')
-        ) {
-          return {
-            success: false,
-            error:
-              'SMS provider is not enabled in the Supabase Dashboard. Please configure Phone Auth / Twilio in your Supabase project settings.',
-          };
-        }
-        return { success: false, error: error.message };
+      const e164Phone = clean.startsWith('+') ? clean : `+91${clean}`;
+
+      // Initialize invisible reCAPTCHA verifier for Firebase
+      const appVerifier = initRecaptchaVerifier();
+      if (!appVerifier) {
+        return {
+          success: false,
+          error: 'reCAPTCHA verification container could not be initialized.',
+        };
+      }
+
+      // Call real Firebase Phone Auth
+      const confirmationResult = await signInWithPhoneNumber(firebaseAuth, e164Phone, appVerifier);
+      if (typeof window !== 'undefined') {
+        (window as any).confirmationResult = confirmationResult;
+        (window as any).lastAuthPhone = e164Phone;
       }
 
       return { success: true };
     } catch (err: any) {
+      console.error('Firebase Phone Auth send error:', err);
+      if (typeof window !== 'undefined' && (window as any).recaptchaVerifier) {
+        try {
+          (window as any).recaptchaVerifier.clear();
+        } catch {}
+        (window as any).recaptchaVerifier = null;
+      }
+
+      const code = err?.code || '';
+      const msg = (err?.message || '').toLowerCase();
+
+      if (msg.includes('region enabled') || msg.includes('sms unable to be sent') || msg.includes('region')) {
+        return {
+          success: false,
+          error:
+            'SMS Region restricted by Google: Go to Firebase Console -> Authentication -> Settings -> SMS Region Policy and enable India (+91), or add your number under Phone -> Test Numbers in Firebase.',
+        };
+      }
+
+      if (code === 'auth/operation-not-allowed' || msg.includes('operation_not_allowed')) {
+        return {
+          success: false,
+          error:
+            'Phone Provider is not enabled in Firebase Console yet. Please open your Firebase Console tab -> Authentication -> Sign-in method -> Click Phone -> Toggle Enable -> Save.',
+        };
+      }
+
+      if (code === 'auth/too-many-requests' || msg.includes('too-many-requests')) {
+        return {
+          success: false,
+          error: 'SMS limit reached or too many requests. Please wait a few minutes before trying again.',
+        };
+      }
+
+      if (code === 'auth/invalid-phone-number' || msg.includes('invalid-phone-number')) {
+        return {
+          success: false,
+          error: 'Invalid phone number format. Please ensure country code is included (e.g. +91).',
+        };
+      }
+
+      if (code === 'auth/captcha-check-failed' || msg.includes('captcha')) {
+        return {
+          success: false,
+          error: 'reCAPTCHA verification failed. Please refresh and try again.',
+        };
+      }
+
       return {
         success: false,
-        error:
-          'SMS provider is not enabled in the Supabase Dashboard. Please configure Phone Auth / Twilio in your Supabase project settings.',
+        error: err?.message || 'Failed to send SMS verification code. Please check your connection.',
       };
     }
   };
 
-  // MOBILE OTP - VERIFY OTP
+  // REAL FIREBASE PHONE AUTH - CONFIRM ORIGINAL SMS OTP
   const verifyPhoneOtp = async (phone: string, token: string, name?: string) => {
     try {
-      const { data, error } = await supabase.auth.verifyOtp({
-        phone: phone.trim(),
-        token: token.trim(),
-        type: 'sms',
-      });
+      const clean = phone.trim().replace(/[^0-9+]/g, '');
+      const digitsOnly = clean.replace(/[^0-9]/g, '');
+      const inputOtp = token.trim();
 
-      if (error) {
+      const confirmationResult: ConfirmationResult | undefined =
+        typeof window !== 'undefined' ? (window as any).confirmationResult : undefined;
+
+      if (!confirmationResult) {
         return {
           success: false,
-          error: 'Invalid OTP. Please check the 6-digit code and try again.',
+          error: 'No active OTP verification session. Please click Send OTP Code first.',
         };
       }
 
-      if (name && data.user) {
-        try {
-          await supabase.auth.updateUser({
-            data: { full_name: name.trim() },
-          });
-        } catch {}
+      // Confirm with Firebase
+      const result = await confirmationResult.confirm(inputOtp);
+      const fbUser = result.user;
+
+      const fakeEmail = `${digitsOnly}@mobile.nearmiss.com`;
+      const localAccs = getLocalAccounts();
+      let existing = localAccs[fakeEmail];
+
+      const resolvedName =
+        (name && name.trim()) ||
+        existing?.name ||
+        fbUser.displayName ||
+        `Driver ${digitsOnly.slice(-4)}`;
+
+      if (!existing) {
+        saveLocalAccount(fakeEmail, 'mobile_user_auth', resolvedName);
+        existing = getLocalAccounts()[fakeEmail];
       }
 
-      setUser(data.user);
-      setSession(data.session);
-      updateProfileFromUser(data.user);
+      const p: UserProfile = {
+        id: fbUser.uid || existing?.id || 'usr_ph_' + digitsOnly,
+        email: fbUser.email || fakeEmail,
+        phone: fbUser.phoneNumber || clean,
+        name: resolvedName,
+        createdAt: fbUser.metadata.creationTime || new Date().toISOString(),
+      };
+
+      const phoneUser: any = {
+        id: p.id,
+        phone: p.phone,
+        email: p.email,
+        aud: 'authenticated',
+        app_metadata: { provider: 'phone' },
+        user_metadata: {
+          full_name: resolvedName,
+          name: resolvedName,
+          phone: p.phone,
+        },
+        created_at: p.createdAt,
+      };
+
+      const fakeSession: any = {
+        access_token: 'firebase_token_phone_' + Date.now(),
+        token_type: 'bearer',
+        user: phoneUser,
+      };
+
+      setUser(phoneUser);
+      setSession(fakeSession);
+      setProfile(p);
+      storeActiveUser(p);
       setIsGuest(false);
       setIsAuthModalVisible(false);
+
       return { success: true };
     } catch (err: any) {
+      console.error('Firebase Phone Auth verify error:', err);
+      const code = err?.code || '';
+      const msg = (err?.message || '').toLowerCase();
+
+      if (code === 'auth/invalid-verification-code' || msg.includes('invalid-verification-code')) {
+        return {
+          success: false,
+          error: 'Incorrect SMS code. Please check the 6-digit code received on your mobile phone.',
+        };
+      }
+
+      if (code === 'auth/code-expired' || msg.includes('code-expired')) {
+        return {
+          success: false,
+          error: 'The SMS code has expired. Please request a new verification code.',
+        };
+      }
+
       return {
         success: false,
-        error: 'Invalid OTP. Please check the 6-digit code and try again.',
+        error: err?.message || 'Invalid SMS code. Please try again.',
       };
     }
   };
