@@ -1,4 +1,4 @@
-﻿import React, { createContext, useContext, useEffect, useState } from 'react';
+import React, { createContext, useContext, useEffect, useState } from 'react';
 import { Platform } from 'react-native';
 import { Session, User } from '@supabase/supabase-js';
 import { supabase } from '@/lib/supabase';
@@ -355,6 +355,45 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   // OAUTH (GOOGLE & FACEBOOK)
   const signInWithOAuth = async (provider: 'google' | 'facebook') => {
+    // 1. Firebase Google Auth Popup
+    if (provider === 'google' && Platform.OS === 'web') {
+      try {
+        const result = await firebaseSignInWithPopup(firebaseAuth, firebaseGoogleProvider);
+        const fbUser = result.user;
+        const p: UserProfile = {
+          id: fbUser.uid,
+          email: fbUser.email || '',
+          name: fbUser.displayName || (fbUser.email ? fbUser.email.split('@')[0] : 'Safe Traveler'),
+          avatarUrl: fbUser.photoURL || undefined,
+          createdAt: fbUser.metadata.creationTime,
+        };
+        setUser({
+          id: fbUser.uid,
+          app_metadata: {},
+          user_metadata: {
+            full_name: p.name,
+            avatar_url: p.avatarUrl,
+          },
+          aud: 'authenticated',
+          created_at: fbUser.metadata.creationTime || new Date().toISOString(),
+          email: fbUser.email || undefined,
+          phone: fbUser.phoneNumber || undefined,
+        } as any);
+        setProfile(p);
+        setIsGuest(false);
+        setIsAuthModalVisible(false);
+        return { success: true };
+      } catch (err: any) {
+        if (err?.code === 'auth/popup-closed-by-user') {
+          return { success: false, error: 'Sign-in cancelled.' };
+        }
+        return {
+          success: false,
+          error: err?.message || 'Google sign-in failed. Please try again.',
+        };
+      }
+    }
+
     try {
       const redirectTo =
         Platform.OS === 'web' && typeof window !== 'undefined'
