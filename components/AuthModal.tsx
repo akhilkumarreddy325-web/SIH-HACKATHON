@@ -587,19 +587,7 @@ export function AuthModal() {
                     <View style={[styles.socialIconBadge, { backgroundColor: '#EA4335' }]}>
                       <Text style={styles.socialBadgeText}>G</Text>
                     </View>
-                    <Text style={styles.socialBtnText}>Google</Text>
-                  </Pressable>
-
-                  {/* Facebook Button */}
-                  <Pressable
-                    disabled={loading}
-                    onPress={() => handleOAuth('facebook')}
-                    style={styles.socialBtn}
-                  >
-                    <View style={[styles.socialIconBadge, { backgroundColor: '#1877F2' }]}>
-                      <Text style={styles.socialBadgeText}>f</Text>
-                    </View>
-                    <Text style={styles.socialBtnText}>Facebook</Text>
+                    <Text style={styles.socialBtnText}>Continue with Google</Text>
                   </Pressable>
                 </View>
               </View>
