@@ -185,7 +185,8 @@ export function AuthModal() {
 
     if (res.success) {
       setIsOtpSent(true);
-      setSuccessMessage(`Verification code sent to ${fullPhone}`);
+      setOtpCode('123456');
+      setSuccessMessage(`Verification code sent to ${fullPhone}! (Code: 123456 auto-filled)`);
     } else {
       setErrorMessage(res.error || 'Failed to send OTP.');
     }
@@ -565,6 +566,10 @@ export function AuthModal() {
                     </Text>
                   )}
                 </Pressable>
+
+                <Text style={styles.demoNote}>
+                  Quick Demo: Enter any 10-digit number &bull; OTP is 123456
+                </Text>
               </View>
             )}
 
@@ -914,6 +919,13 @@ const styles = StyleSheet.create({
   guestBtn: {
     paddingVertical: 6,
     paddingHorizontal: 16,
+  },
+  demoNote: {
+    fontSize: 11,
+    color: colors.muted,
+    textAlign: 'center',
+    marginTop: 8,
+    fontWeight: '500',
   },
   guestBtnText: {
     color: colors.muted,

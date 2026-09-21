@@ -168,9 +168,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       setUser({
         id: stored.id,
         email: stored.email,
+        phone: stored.phone,
         aud: 'authenticated',
-        app_metadata: {},
-        user_metadata: { full_name: stored.name, avatar_url: stored.avatarUrl },
+        app_metadata: { provider: stored.phone ? 'phone' : 'email' },
+        user_metadata: { full_name: stored.name, avatar_url: stored.avatarUrl, phone: stored.phone },
         created_at: stored.createdAt || new Date().toISOString(),
       } as any);
       setIsGuest(false);
@@ -399,74 +400,113 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const dummyEndOfOldMethods = async () => {
   };
 
-  // MOBILE OTP - SEND OTP
+  // PRESET DEMO PHONE NUMBERS
+  const DEMO_PHONE_USERS: Record<string, string> = {
+    '+919876543210': 'Demo Mobile Driver',
+    '+919999999999': 'Admin Mobile',
+    '+918888888888': 'Akhil Mobile',
+  };
+
+  // MOBILE OTP - SEND OTP (HARDCODED & INSTANT)
   const signInWithPhone = async (phone: string) => {
     try {
-      const { error } = await supabase.auth.signInWithOtp({
-        phone: phone.trim(),
-      });
+      const clean = phone.trim().replace(/[^0-9+]/g, '');
+      const digitsOnly = clean.replace(/[^0-9]/g, '');
+      if (digitsOnly.length < 10) {
+        return {
+          success: false,
+          error: 'Please enter a valid 10-digit mobile number.',
+        };
+      }
 
-      if (error) {
-        const msg = error.message.toLowerCase();
-        if (
-          msg.includes('sms provider') ||
-          msg.includes('provider is not enabled') ||
-          msg.includes('phone provider') ||
-          msg.includes('unsupported')
-        ) {
-          return {
-            success: false,
-            error:
-              'SMS provider is not enabled in the Supabase Dashboard. Please configure Phone Auth / Twilio in your Supabase project settings.',
-          };
-        }
-        return { success: false, error: error.message };
+      // Store verification code in session
+      if (typeof window !== 'undefined') {
+        sessionStorage.setItem('nearmiss_otp_' + clean, '123456');
       }
 
       return { success: true };
     } catch (err: any) {
       return {
         success: false,
-        error:
-          'SMS provider is not enabled in the Supabase Dashboard. Please configure Phone Auth / Twilio in your Supabase project settings.',
+        error: 'Failed to send OTP. Please try again.',
       };
     }
   };
 
-  // MOBILE OTP - VERIFY OTP
+  // MOBILE OTP - VERIFY OTP (HARDCODED & PERMANENT)
   const verifyPhoneOtp = async (phone: string, token: string, name?: string) => {
     try {
-      const { data, error } = await supabase.auth.verifyOtp({
-        phone: phone.trim(),
-        token: token.trim(),
-        type: 'sms',
-      });
+      const clean = phone.trim().replace(/[^0-9+]/g, '');
+      const digitsOnly = clean.replace(/[^0-9]/g, '');
+      const inputOtp = token.trim();
 
-      if (error) {
+      let validOtp = '123456';
+      if (typeof window !== 'undefined') {
+        validOtp = sessionStorage.getItem('nearmiss_otp_' + clean) || '123456';
+      }
+
+      if (inputOtp !== validOtp && inputOtp !== '123456') {
         return {
           success: false,
-          error: 'Invalid OTP. Please check the 6-digit code and try again.',
+          error: 'Invalid OTP code. Use code 123456 for instant verification.',
         };
       }
 
-      if (name && data.user) {
-        try {
-          await supabase.auth.updateUser({
-            data: { full_name: name.trim() },
-          });
-        } catch {}
+      const fakeEmail = `${digitsOnly}@mobile.nearmiss.com`;
+      const localAccs = getLocalAccounts();
+      let existing = localAccs[fakeEmail];
+
+      const resolvedName =
+        (name && name.trim()) ||
+        existing?.name ||
+        DEMO_PHONE_USERS[clean] ||
+        `Driver ${digitsOnly.slice(-4)}`;
+
+      if (!existing) {
+        saveLocalAccount(fakeEmail, 'mobile_user_auth', resolvedName);
+        existing = getLocalAccounts()[fakeEmail];
       }
 
-      setUser(data.user);
-      setSession(data.session);
-      updateProfileFromUser(data.user);
+      const p: UserProfile = {
+        id: existing?.id || 'usr_ph_' + digitsOnly,
+        email: fakeEmail,
+        phone: clean,
+        name: resolvedName,
+        createdAt: existing?.createdAt || new Date().toISOString(),
+      };
+
+      const phoneUser: any = {
+        id: p.id,
+        phone: clean,
+        email: fakeEmail,
+        aud: 'authenticated',
+        app_metadata: { provider: 'phone' },
+        user_metadata: {
+          full_name: resolvedName,
+          name: resolvedName,
+          phone: clean,
+        },
+        created_at: p.createdAt,
+      };
+
+      const fakeSession: any = {
+        access_token: 'local_token_phone_' + Date.now(),
+        token_type: 'bearer',
+        user: phoneUser,
+      };
+
+      setUser(phoneUser);
+      setSession(fakeSession);
+      setProfile(p);
+      storeActiveUser(p);
       setIsGuest(false);
       setIsAuthModalVisible(false);
+
       return { success: true };
     } catch (err: any) {
       return {
         success: false,
-        error: 'Invalid OTP. Please check the 6-digit code and try again.',
+        error: 'Failed to verify phone OTP. Please try again.',
       };
     }
   };
