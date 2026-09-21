@@ -167,8 +167,15 @@ export function AuthModal() {
     setErrorMessage(null);
     setSuccessMessage(null);
 
-    const cleanPhone = phoneNumber.replace(/[^0-9]/g, '');
-    if (cleanPhone.length < 10) {
+    let cleanPhone = phoneNumber.replace(/[^0-9]/g, '');
+    let cleanCode = countryCode.trim().replace(/[^0-9+]/g, '');
+    if (!cleanCode.startsWith('+')) cleanCode = `+${cleanCode}`;
+
+    if (cleanPhone.startsWith('91') && cleanPhone.length === 12 && cleanCode === '+91') {
+      cleanPhone = cleanPhone.slice(2);
+    }
+
+    if (cleanPhone.length !== 10) {
       setErrorMessage('Please enter a valid 10-digit mobile number.');
       return;
     }
@@ -178,7 +185,7 @@ export function AuthModal() {
       return;
     }
 
-    const fullPhone = `${countryCode}${cleanPhone}`;
+    const fullPhone = `${cleanCode}${cleanPhone}`;
     setLoading(true);
     const res = await signInWithPhone(fullPhone);
     setLoading(false);
@@ -202,8 +209,13 @@ export function AuthModal() {
       return;
     }
 
-    const cleanPhone = phoneNumber.replace(/[^0-9]/g, '');
-    const fullPhone = `${countryCode}${cleanPhone}`;
+    let cleanPhone = phoneNumber.replace(/[^0-9]/g, '');
+    let cleanCodeStr = countryCode.trim().replace(/[^0-9+]/g, '');
+    if (!cleanCodeStr.startsWith('+')) cleanCodeStr = `+${cleanCodeStr}`;
+    if (cleanPhone.startsWith('91') && cleanPhone.length === 12 && cleanCodeStr === '+91') {
+      cleanPhone = cleanPhone.slice(2);
+    }
+    const fullPhone = `${cleanCodeStr}${cleanPhone}`;
 
     setLoading(true);
     const res = await verifyPhoneOtp(fullPhone, cleanCode, name);
@@ -507,18 +519,19 @@ export function AuthModal() {
                         value={countryCode}
                         onChangeText={setCountryCode}
                         keyboardType="phone-pad"
-                        maxLength={5}
+                        maxLength={4}
                       />
                     </View>
                     <View style={[styles.inputBox, { flex: 1 }]}>
                       <Phone size={15} color={colors.muted} />
                       <TextInput
                         style={styles.textInput}
-                        placeholder="98765 43210"
+                        placeholder="10-digit number (e.g. 9876543210)"
                         placeholderTextColor={colors.muted}
                         value={phoneNumber}
                         onChangeText={setPhoneNumber}
                         keyboardType="number-pad"
+                        maxLength={10}
                         editable={!isOtpSent}
                       />
                     </View>
