@@ -214,10 +214,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       });
 
       if (error) {
-        // Generic credentials error to avoid revealing account existence
+        const msg = error.message.toLowerCase();
+        if (msg.includes('email not confirmed')) {
+          return {
+            success: false,
+            error: 'Email not confirmed yet. Please verify your inbox or turn OFF "Confirm email" in Supabase Dashboard.',
+          };
+        }
         return {
           success: false,
-          error: 'Invalid credentials. Please verify your email and password.',
+          error: error.message || 'Invalid credentials. Please verify your email and password.',
         };
       }
 
