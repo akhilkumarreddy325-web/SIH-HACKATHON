@@ -5,12 +5,9 @@ import {
   CheckCircle,
   Eye,
   EyeOff,
-  Globe,
   Lock,
   Mail,
-  Phone,
   Shield,
-  Smartphone,
   User as UserIcon,
   X,
 } from 'lucide-react-native';
@@ -35,12 +32,8 @@ export function AuthModal() {
     continueAsGuest,
     authMode,
     setAuthMode,
-    authMethod,
-    setAuthMethod,
     signInWithEmail,
     signUpWithEmail,
-    signInWithPhone,
-    verifyPhoneOtp,
     signInWithOAuth,
     resetPassword,
   } = useAuth();
@@ -50,10 +43,6 @@ export function AuthModal() {
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [name, setName] = useState('');
-  const [countryCode, setCountryCode] = useState('+91');
-  const [phoneNumber, setPhoneNumber] = useState('');
-  const [otpCode, setOtpCode] = useState('');
-  const [isOtpSent, setIsOtpSent] = useState(false);
 
   // UI state
   const [showPassword, setShowPassword] = useState(false);
@@ -68,9 +57,6 @@ export function AuthModal() {
     setPassword('');
     setConfirmPassword('');
     setName('');
-    setPhoneNumber('');
-    setOtpCode('');
-    setIsOtpSent(false);
     setErrorMessage(null);
     setSuccessMessage(null);
     setIsForgotMode(false);
@@ -126,7 +112,6 @@ export function AuthModal() {
       if (res.success) {
         resetForm();
       } else {
-        // Generic credentials error (no account enumeration)
         setErrorMessage(res.error || 'Invalid credentials. Please verify your email and password.');
       }
       return;
@@ -139,7 +124,6 @@ export function AuthModal() {
         return;
       }
 
-      // Password strength requirements applied only during signup
       if (!password || password.length < 6) {
         setErrorMessage('Password must be at least 6 characters.');
         return;
@@ -162,72 +146,6 @@ export function AuthModal() {
     }
   };
 
-  // MOBILE OTP SUBMISSION
-  const handleMobileSendOtp = async () => {
-    setErrorMessage(null);
-    setSuccessMessage(null);
-
-    let cleanPhone = phoneNumber.replace(/[^0-9]/g, '');
-    let cleanCode = countryCode.trim().replace(/[^0-9+]/g, '');
-    if (!cleanCode.startsWith('+')) cleanCode = `+${cleanCode}`;
-
-    if (cleanPhone.startsWith('91') && cleanPhone.length === 12 && cleanCode === '+91') {
-      cleanPhone = cleanPhone.slice(2);
-    }
-
-    if (cleanPhone.length !== 10) {
-      setErrorMessage('Please enter a valid 10-digit mobile number.');
-      return;
-    }
-
-    if (authMode === 'signup' && !name.trim()) {
-      setErrorMessage('Please enter your full name.');
-      return;
-    }
-
-    const fullPhone = `${cleanCode}${cleanPhone}`;
-    setLoading(true);
-    const res = await signInWithPhone(fullPhone);
-    setLoading(false);
-
-    if (res.success) {
-      setIsOtpSent(true);
-      setOtpCode('');
-      setSuccessMessage(`Original SMS OTP sent to ${fullPhone}! Please enter the 6-digit code received.`);
-    } else {
-      setErrorMessage(res.error || 'Failed to send OTP.');
-    }
-  };
-
-  const handleMobileVerifyOtp = async () => {
-    setErrorMessage(null);
-    setSuccessMessage(null);
-
-    const cleanCode = otpCode.trim();
-    if (!cleanCode || cleanCode.length < 6) {
-      setErrorMessage('Please enter the 6-digit OTP code.');
-      return;
-    }
-
-    let cleanPhone = phoneNumber.replace(/[^0-9]/g, '');
-    let cleanCodeStr = countryCode.trim().replace(/[^0-9+]/g, '');
-    if (!cleanCodeStr.startsWith('+')) cleanCodeStr = `+${cleanCodeStr}`;
-    if (cleanPhone.startsWith('91') && cleanPhone.length === 12 && cleanCodeStr === '+91') {
-      cleanPhone = cleanPhone.slice(2);
-    }
-    const fullPhone = `${cleanCodeStr}${cleanPhone}`;
-
-    setLoading(true);
-    const res = await verifyPhoneOtp(fullPhone, cleanCode, name);
-    setLoading(false);
-
-    if (res.success) {
-      resetForm();
-    } else {
-      setErrorMessage(res.error || 'Invalid OTP. Please check the code and try again.');
-    }
-  };
-
   // OAUTH HANDLERS
   const handleOAuth = async (provider: 'google' | 'facebook') => {
     setErrorMessage(null);
@@ -244,385 +162,249 @@ export function AuthModal() {
 
   const modalContent = (
     <View style={[styles.backdrop, Platform.OS === 'web' && ({ position: 'fixed', inset: 0, zIndex: 999999 } as any)]}>
-        <View style={[styles.modalCard, shadow]}>
-          <ScrollView
-            contentContainerStyle={styles.scrollContent}
-            showsVerticalScrollIndicator={false}
-            keyboardShouldPersistTaps="handled"
-          >
-            {/* Header with NearMiss Branding */}
-            <View style={styles.header}>
-              <View style={styles.brandingRow}>
-                <View style={styles.logoBadge}>
-                  <Shield size={20} color="#fff" />
-                </View>
-                <View>
-                  <Text style={styles.kicker}>NEARMISS PLATFORM</Text>
-                  <Text style={styles.headerTitle}>
-                    {isForgotMode
-                      ? 'Reset Password'
-                      : authMode === 'signup'
-                      ? 'Create Account'
-                      : 'Sign In'}
-                  </Text>
-                </View>
+      <View style={[styles.modalCard, shadow]}>
+        <ScrollView
+          contentContainerStyle={styles.scrollContent}
+          showsVerticalScrollIndicator={false}
+          keyboardShouldPersistTaps="handled"
+        >
+          {/* Header with NearMiss Branding */}
+          <View style={styles.header}>
+            <View style={styles.brandingRow}>
+              <View style={styles.logoBadge}>
+                <Shield size={20} color="#fff" />
               </View>
-
-              <Pressable onPress={handleClose} style={styles.closeBtn} hitSlop={8}>
-                <X size={18} color={colors.muted} />
-              </Pressable>
-            </View>
-
-            {/* Method Toggle: Email vs Mobile (Hidden in forgot password mode) */}
-            {!isForgotMode && (
-              <View style={styles.methodToggleContainer}>
-                <Pressable
-                  onPress={() => {
-                    setAuthMethod('email');
-                    setErrorMessage(null);
-                    setSuccessMessage(null);
-                  }}
-                  style={[styles.methodBtn, authMethod === 'email' && styles.methodBtnActive]}
-                >
-                  <Mail size={14} color={authMethod === 'email' ? colors.ink : colors.muted} />
-                  <Text style={[styles.methodText, authMethod === 'email' && styles.methodTextActive]}>
-                    Email Address
-                  </Text>
-                </Pressable>
-
-                <Pressable
-                  onPress={() => {
-                    setAuthMethod('mobile');
-                    setErrorMessage(null);
-                    setSuccessMessage(null);
-                    setIsOtpSent(false);
-                  }}
-                  style={[styles.methodBtn, authMethod === 'mobile' && styles.methodBtnActive]}
-                >
-                  <Smartphone size={14} color={authMethod === 'mobile' ? colors.ink : colors.muted} />
-                  <Text style={[styles.methodText, authMethod === 'mobile' && styles.methodTextActive]}>
-                    Mobile Number
-                  </Text>
-                </Pressable>
-              </View>
-            )}
-
-            {/* Mode Switcher: Sign In vs Create Account */}
-            {!isForgotMode && (
-              <View style={styles.modeTabs}>
-                <Pressable
-                  onPress={() => {
-                    setAuthMode('signin');
-                    setErrorMessage(null);
-                    setSuccessMessage(null);
-                    setIsOtpSent(false);
-                  }}
-                  style={[styles.modeTab, authMode === 'signin' && styles.modeTabActive]}
-                >
-                  <Text style={[styles.modeTabText, authMode === 'signin' && styles.modeTabTextActive]}>
-                    Sign In
-                  </Text>
-                </Pressable>
-
-                <Pressable
-                  onPress={() => {
-                    setAuthMode('signup');
-                    setErrorMessage(null);
-                    setSuccessMessage(null);
-                    setIsOtpSent(false);
-                  }}
-                  style={[styles.modeTab, authMode === 'signup' && styles.modeTabActive]}
-                >
-                  <Text style={[styles.modeTabText, authMode === 'signup' && styles.modeTabTextActive]}>
-                    Create Account
-                  </Text>
-                </Pressable>
-              </View>
-            )}
-
-            {/* Error Message Banner */}
-            {errorMessage && (
-              <View style={styles.errorBox}>
-                <AlertCircle size={16} color={colors.red} />
-                <Text style={styles.errorText}>{errorMessage}</Text>
-              </View>
-            )}
-
-            {/* Success Message Banner */}
-            {successMessage && (
-              <View style={styles.successBox}>
-                <CheckCircle size={16} color={colors.green} />
-                <Text style={styles.successText}>{successMessage}</Text>
-              </View>
-            )}
-
-            {/* 1. EMAIL FLOW */}
-            {authMethod === 'email' && (
-              <View style={styles.formContainer}>
-                {authMode === 'signup' && !isForgotMode && (
-                  <View style={styles.fieldGroup}>
-                    <Text style={styles.fieldLabel}>FULL NAME</Text>
-                    <View style={styles.inputBox}>
-                      <UserIcon size={16} color={colors.muted} />
-                      <TextInput
-                        style={styles.textInput}
-                        placeholder="e.g. Akhil Sharma"
-                        placeholderTextColor={colors.muted}
-                        value={name}
-                        onChangeText={setName}
-                        autoCapitalize="words"
-                      />
-                    </View>
-                  </View>
-                )}
-
-                <View style={styles.fieldGroup}>
-                  <Text style={styles.fieldLabel}>EMAIL ADDRESS</Text>
-                  <View style={styles.inputBox}>
-                    <Mail size={16} color={colors.muted} />
-                    <TextInput
-                      style={styles.textInput}
-                      placeholder="driver@example.com"
-                      placeholderTextColor={colors.muted}
-                      value={email}
-                      onChangeText={setEmail}
-                      autoCapitalize="none"
-                      keyboardType="email-address"
-                    />
-                  </View>
-                </View>
-
-                {!isForgotMode && (
-                  <View style={styles.fieldGroup}>
-                    <View style={styles.labelWithAction}>
-                      <Text style={styles.fieldLabel}>PASSWORD</Text>
-                      {authMode === 'signin' && (
-                        <Pressable
-                          onPress={() => {
-                            setIsForgotMode(true);
-                            setErrorMessage(null);
-                            setSuccessMessage(null);
-                          }}
-                        >
-                          <Text style={styles.forgotLink}>Forgot password?</Text>
-                        </Pressable>
-                      )}
-                    </View>
-                    <View style={styles.inputBox}>
-                      <Lock size={16} color={colors.muted} />
-                      <TextInput
-                        style={styles.textInput}
-                        placeholder="••••••••"
-                        placeholderTextColor={colors.muted}
-                        value={password}
-                        onChangeText={setPassword}
-                        secureTextEntry={!showPassword}
-                        autoCapitalize="none"
-                      />
-                      <Pressable onPress={() => setShowPassword(!showPassword)} hitSlop={6}>
-                        {showPassword ? (
-                          <EyeOff size={16} color={colors.muted} />
-                        ) : (
-                          <Eye size={16} color={colors.muted} />
-                        )}
-                      </Pressable>
-                    </View>
-                  </View>
-                )}
-
-                {authMode === 'signup' && !isForgotMode && (
-                  <View style={styles.fieldGroup}>
-                    <Text style={styles.fieldLabel}>CONFIRM PASSWORD</Text>
-                    <View style={styles.inputBox}>
-                      <Lock size={16} color={colors.muted} />
-                      <TextInput
-                        style={styles.textInput}
-                        placeholder="••••••••"
-                        placeholderTextColor={colors.muted}
-                        value={confirmPassword}
-                        onChangeText={setConfirmPassword}
-                        secureTextEntry={!showConfirmPassword}
-                        autoCapitalize="none"
-                      />
-                      <Pressable onPress={() => setShowConfirmPassword(!showConfirmPassword)} hitSlop={6}>
-                        {showConfirmPassword ? (
-                          <EyeOff size={16} color={colors.muted} />
-                        ) : (
-                          <Eye size={16} color={colors.muted} />
-                        )}
-                      </Pressable>
-                    </View>
-                  </View>
-                )}
-
-                {/* Submit Button */}
-                <Pressable
-                  disabled={loading}
-                  onPress={handleEmailSubmit}
-                  style={[styles.primaryActionBtn, loading && { opacity: 0.7 }]}
-                >
-                  {loading ? (
-                    <ActivityIndicator size="small" color="#fff" />
-                  ) : (
-                    <Text style={styles.primaryActionText}>
-                      {isForgotMode
-                        ? 'Send Password Reset Link'
-                        : authMode === 'signup'
-                        ? 'Create Free Account'
-                        : 'Sign In'}
-                    </Text>
-                  )}
-                </Pressable>
-
-                {isForgotMode && (
-                  <Pressable
-                    onPress={() => {
-                      setIsForgotMode(false);
-                      setErrorMessage(null);
-                    }}
-                    style={styles.backBtn}
-                  >
-                    <ArrowLeft size={14} color={colors.muted} />
-                    <Text style={styles.backBtnText}>Back to Sign In</Text>
-                  </Pressable>
-                )}
-              </View>
-            )}
-
-            {/* 2. MOBILE NUMBER FLOW */}
-            {authMethod === 'mobile' && !isForgotMode && (
-              <View style={styles.formContainer}>
-                {authMode === 'signup' && !isOtpSent && (
-                  <View style={styles.fieldGroup}>
-                    <Text style={styles.fieldLabel}>FULL NAME</Text>
-                    <View style={styles.inputBox}>
-                      <UserIcon size={16} color={colors.muted} />
-                      <TextInput
-                        style={styles.textInput}
-                        placeholder="e.g. Akhil Sharma"
-                        placeholderTextColor={colors.muted}
-                        value={name}
-                        onChangeText={setName}
-                        autoCapitalize="words"
-                      />
-                    </View>
-                  </View>
-                )}
-
-                <View style={styles.fieldGroup}>
-                  <Text style={styles.fieldLabel}>MOBILE PHONE NUMBER</Text>
-                  <View style={styles.phoneInputRow}>
-                    <View style={styles.countryCodeBox}>
-                      <Globe size={14} color={colors.muted} />
-                      <TextInput
-                        style={styles.countryCodeInput}
-                        value={countryCode}
-                        onChangeText={setCountryCode}
-                        keyboardType="phone-pad"
-                        maxLength={4}
-                      />
-                    </View>
-                    <View style={[styles.inputBox, { flex: 1 }]}>
-                      <Phone size={15} color={colors.muted} />
-                      <TextInput
-                        style={styles.textInput}
-                        placeholder="10-digit number (e.g. 9876543210)"
-                        placeholderTextColor={colors.muted}
-                        value={phoneNumber}
-                        onChangeText={setPhoneNumber}
-                        keyboardType="number-pad"
-                        maxLength={10}
-                        editable={!isOtpSent}
-                      />
-                    </View>
-                  </View>
-                </View>
-
-                {isOtpSent && (
-                  <View style={styles.fieldGroup}>
-                    <View style={styles.labelWithAction}>
-                      <Text style={styles.fieldLabel}>ENTER 6-DIGIT OTP</Text>
-                      <Pressable onPress={() => setIsOtpSent(false)}>
-                        <Text style={styles.forgotLink}>Change number</Text>
-                      </Pressable>
-                    </View>
-                    <View style={styles.inputBox}>
-                      <Lock size={16} color={colors.muted} />
-                      <TextInput
-                        style={[styles.textInput, styles.otpInput]}
-                        placeholder="123456"
-                        placeholderTextColor={colors.muted}
-                        value={otpCode}
-                        onChangeText={setOtpCode}
-                        keyboardType="number-pad"
-                        maxLength={6}
-                      />
-                    </View>
-                  </View>
-                )}
-
-                {/* Mobile Action Button */}
-                <Pressable
-                  disabled={loading}
-                  onPress={isOtpSent ? handleMobileVerifyOtp : handleMobileSendOtp}
-                  style={[styles.primaryActionBtn, loading && { opacity: 0.7 }]}
-                >
-                  {loading ? (
-                    <ActivityIndicator size="small" color="#fff" />
-                  ) : (
-                    <Text style={styles.primaryActionText}>
-                      {isOtpSent
-                        ? 'Verify & Sign In'
-                        : authMode === 'signup'
-                        ? 'Send OTP for Signup'
-                        : 'Send OTP Code'}
-                    </Text>
-                  )}
-                </Pressable>
-
-                <Text style={styles.demoNote}>
-                  A 6-digit SMS verification code will be sent to your mobile phone.
+              <View>
+                <Text style={styles.kicker}>NEARMISS PLATFORM</Text>
+                <Text style={styles.headerTitle}>
+                  {isForgotMode
+                    ? 'Reset Password'
+                    : authMode === 'signup'
+                    ? 'Create Account'
+                    : 'Sign In'}
                 </Text>
               </View>
+            </View>
+
+            <Pressable onPress={handleClose} style={styles.closeBtn} hitSlop={8}>
+              <X size={18} color={colors.muted} />
+            </Pressable>
+          </View>
+
+          {/* Mode Switcher: Sign In vs Create Account */}
+          {!isForgotMode && (
+            <View style={styles.modeTabs}>
+              <Pressable
+                onPress={() => {
+                  setAuthMode('signin');
+                  setErrorMessage(null);
+                  setSuccessMessage(null);
+                }}
+                style={[styles.modeTab, authMode === 'signin' && styles.modeTabActive]}
+              >
+                <Text style={[styles.modeTabText, authMode === 'signin' && styles.modeTabTextActive]}>
+                  Sign In
+                </Text>
+              </Pressable>
+
+              <Pressable
+                onPress={() => {
+                  setAuthMode('signup');
+                  setErrorMessage(null);
+                  setSuccessMessage(null);
+                }}
+                style={[styles.modeTab, authMode === 'signup' && styles.modeTabActive]}
+              >
+                <Text style={[styles.modeTabText, authMode === 'signup' && styles.modeTabTextActive]}>
+                  Create Account
+                </Text>
+              </Pressable>
+            </View>
+          )}
+
+          {/* Error Message Banner */}
+          {errorMessage && (
+            <View style={styles.errorBox}>
+              <AlertCircle size={16} color={colors.red} />
+              <Text style={styles.errorText}>{errorMessage}</Text>
+            </View>
+          )}
+
+          {/* Success Message Banner */}
+          {successMessage && (
+            <View style={styles.successBox}>
+              <CheckCircle size={16} color={colors.green} />
+              <Text style={styles.successText}>{successMessage}</Text>
+            </View>
+          )}
+
+          {/* EMAIL FLOW */}
+          <View style={styles.formContainer}>
+            {authMode === 'signup' && !isForgotMode && (
+              <View style={styles.fieldGroup}>
+                <Text style={styles.fieldLabel}>FULL NAME</Text>
+                <View style={styles.inputBox}>
+                  <UserIcon size={16} color={colors.muted} />
+                  <TextInput
+                    style={styles.textInput}
+                    placeholder="e.g. Akhil Sharma"
+                    placeholderTextColor={colors.muted}
+                    value={name}
+                    onChangeText={setName}
+                    autoCapitalize="words"
+                  />
+                </View>
+              </View>
             )}
 
-            {/* 3. SOCIAL LOGINS (GOOGLE & FACEBOOK) */}
-            {!isForgotMode && (
-              <View style={styles.socialSection}>
-                <View style={styles.dividerRow}>
-                  <View style={styles.dividerLine} />
-                  <Text style={styles.dividerText}>OR CONTINUE WITH</Text>
-                  <View style={styles.dividerLine} />
-                </View>
+            <View style={styles.fieldGroup}>
+              <Text style={styles.fieldLabel}>EMAIL ADDRESS</Text>
+              <View style={styles.inputBox}>
+                <Mail size={16} color={colors.muted} />
+                <TextInput
+                  style={styles.textInput}
+                  placeholder="driver@example.com"
+                  placeholderTextColor={colors.muted}
+                  value={email}
+                  onChangeText={setEmail}
+                  autoCapitalize="none"
+                  keyboardType="email-address"
+                />
+              </View>
+            </View>
 
-                <View style={styles.socialBtnRow}>
-                  {/* Google Button */}
-                  <Pressable
-                    disabled={loading}
-                    onPress={() => handleOAuth('google')}
-                    style={styles.socialBtn}
-                  >
-                    <View style={[styles.socialIconBadge, { backgroundColor: '#EA4335' }]}>
-                      <Text style={styles.socialBadgeText}>G</Text>
-                    </View>
-                    <Text style={styles.socialBtnText}>Continue with Google</Text>
+            {!isForgotMode && (
+              <View style={styles.fieldGroup}>
+                <View style={styles.labelWithAction}>
+                  <Text style={styles.fieldLabel}>PASSWORD</Text>
+                  {authMode === 'signin' && (
+                    <Pressable
+                      onPress={() => {
+                        setIsForgotMode(true);
+                        setErrorMessage(null);
+                        setSuccessMessage(null);
+                      }}
+                    >
+                      <Text style={styles.forgotLink}>Forgot password?</Text>
+                    </Pressable>
+                  )}
+                </View>
+                <View style={styles.inputBox}>
+                  <Lock size={16} color={colors.muted} />
+                  <TextInput
+                    style={styles.textInput}
+                    placeholder="•••••••••"
+                    placeholderTextColor={colors.muted}
+                    value={password}
+                    onChangeText={setPassword}
+                    secureTextEntry={!showPassword}
+                    autoCapitalize="none"
+                  />
+                  <Pressable onPress={() => setShowPassword(!showPassword)} hitSlop={6}>
+                    {showPassword ? (
+                      <EyeOff size={16} color={colors.muted} />
+                    ) : (
+                      <Eye size={16} color={colors.muted} />
+                    )}
                   </Pressable>
                 </View>
               </View>
             )}
 
-            {/* 4. CONTINUE AS GUEST */}
-            <View style={styles.guestSection}>
-              <Pressable onPress={handleGuest} style={styles.guestBtn}>
-                <Text style={styles.guestBtnText}>Continue as Guest</Text>
+            {authMode === 'signup' && !isForgotMode && (
+              <View style={styles.fieldGroup}>
+                <Text style={styles.fieldLabel}>CONFIRM PASSWORD</Text>
+                <View style={styles.inputBox}>
+                  <Lock size={16} color={colors.muted} />
+                  <TextInput
+                    style={styles.textInput}
+                    placeholder="•••••••••"
+                    placeholderTextColor={colors.muted}
+                    value={confirmPassword}
+                    onChangeText={setConfirmPassword}
+                    secureTextEntry={!showConfirmPassword}
+                    autoCapitalize="none"
+                  />
+                  <Pressable onPress={() => setShowConfirmPassword(!showConfirmPassword)} hitSlop={6}>
+                    {showConfirmPassword ? (
+                      <EyeOff size={16} color={colors.muted} />
+                    ) : (
+                      <Eye size={16} color={colors.muted} />
+                    )}
+                  </Pressable>
+                </View>
+              </View>
+            )}
+
+            {/* Submit Button */}
+            <Pressable
+              disabled={loading}
+              onPress={handleEmailSubmit}
+              style={[styles.primaryActionBtn, loading && { opacity: 0.7 }]}
+            >
+              {loading ? (
+                <ActivityIndicator size="small" color="#fff" />
+              ) : (
+                <Text style={styles.primaryActionText}>
+                  {isForgotMode
+                    ? 'Send Password Reset Link'
+                    : authMode === 'signup'
+                    ? 'Create Free Account'
+                    : 'Sign In'}
+                </Text>
+              )}
+            </Pressable>
+
+            {isForgotMode && (
+              <Pressable
+                onPress={() => {
+                  setIsForgotMode(false);
+                  setErrorMessage(null);
+                }}
+                style={styles.backBtn}
+              >
+                <ArrowLeft size={14} color={colors.muted} />
+                <Text style={styles.backBtnText}>Back to Sign In</Text>
               </Pressable>
-              <Text style={styles.privacyGuarantee}>
-                Authenticated user trips and reported hazards are isolated to your private account.
-              </Text>
+            )}
+          </View>
+
+          {/* SOCIAL LOGINS (GOOGLE) */}
+          {!isForgotMode && (
+            <View style={styles.socialSection}>
+              <View style={styles.dividerRow}>
+                <View style={styles.dividerLine} />
+                <Text style={styles.dividerText}>OR CONTINUE WITH</Text>
+                <View style={styles.dividerLine} />
+              </View>
+
+              <View style={styles.socialBtnRow}>
+                <Pressable
+                  disabled={loading}
+                  onPress={() => handleOAuth('google')}
+                  style={styles.socialBtn}
+                >
+                  <View style={[styles.socialIconBadge, { backgroundColor: '#EA4335' }]}>
+                    <Text style={styles.socialBadgeText}>G</Text>
+                  </View>
+                  <Text style={styles.socialBtnText}>Continue with Google</Text>
+                </Pressable>
+              </View>
             </View>
-          </ScrollView>
-        </View>
+          )}
+
+          {/* CONTINUE AS GUEST */}
+          <View style={styles.guestSection}>
+            <Pressable onPress={handleGuest} style={styles.guestBtn}>
+              <Text style={styles.guestBtnText}>Continue as Guest</Text>
+            </Pressable>
+            <Text style={styles.privacyGuarantee}>
+              Authenticated user trips and reported hazards are isolated to your private account.
+            </Text>
+          </View>
+        </ScrollView>
       </View>
+    </View>
   );
 
   if (Platform.OS === 'web') {
@@ -696,158 +478,108 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     backgroundColor: colors.canvas,
   },
-  methodToggleContainer: {
+  modeTabs: {
     flexDirection: 'row',
     backgroundColor: colors.canvas,
     borderRadius: 12,
     padding: 3,
-    marginBottom: 12,
-  },
-  methodBtn: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 6,
-    paddingVertical: 9,
-    borderRadius: 9,
-  },
-  methodBtnActive: {
-    backgroundColor: '#fff',
-    ...shadow,
-  },
-  methodText: {
-    color: colors.muted,
-    fontSize: 12,
-    fontWeight: '800',
-  },
-  methodTextActive: {
-    color: colors.ink,
-  },
-  modeTabs: {
-    flexDirection: 'row',
-    backgroundColor: colors.canvas,
-    borderRadius: 10,
-    padding: 2,
     marginBottom: 16,
   },
   modeTab: {
     flex: 1,
+    paddingVertical: 8,
     alignItems: 'center',
-    paddingVertical: 7,
-    borderRadius: 8,
+    borderRadius: 9,
   },
   modeTabActive: {
-    backgroundColor: colors.ink,
+    backgroundColor: colors.surface,
+    ...shadow,
   },
   modeTabText: {
+    fontSize: 13,
+    fontWeight: '700',
     color: colors.muted,
-    fontSize: 11,
-    fontWeight: '800',
   },
   modeTabTextActive: {
-    color: '#fff',
+    color: colors.ink,
   },
   errorBox: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
-    backgroundColor: colors.redSoft,
-    padding: 10,
+    backgroundColor: '#FEF2F2',
+    borderWidth: 1,
+    borderColor: '#FECACA',
     borderRadius: 10,
-    marginBottom: 12,
+    padding: 10,
+    marginBottom: 14,
   },
   errorText: {
     color: colors.red,
     fontSize: 12,
-    fontWeight: '700',
+    fontWeight: '600',
     flex: 1,
-    lineHeight: 16,
   },
   successBox: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
-    backgroundColor: colors.greenSoft,
-    padding: 10,
+    backgroundColor: '#F0FDF4',
+    borderWidth: 1,
+    borderColor: '#BBF7D0',
     borderRadius: 10,
-    marginBottom: 12,
+    padding: 10,
+    marginBottom: 14,
   },
   successText: {
     color: colors.green,
     fontSize: 12,
-    fontWeight: '700',
+    fontWeight: '600',
     flex: 1,
   },
   formContainer: {
-    gap: 11,
+    gap: 12,
   },
-  fieldGroup: {},
+  fieldGroup: {
+    gap: 6,
+  },
+  fieldLabel: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: colors.muted,
+    letterSpacing: 1.1,
+  },
   labelWithAction: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
   },
-  fieldLabel: {
-    color: colors.muted,
-    fontSize: 10,
-    fontWeight: '900',
-    letterSpacing: 1,
-    marginBottom: 5,
-  },
   forgotLink: {
-    color: colors.teal,
     fontSize: 11,
-    fontWeight: '800',
+    fontWeight: '700',
+    color: colors.teal,
   },
   inputBox: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 10,
-    backgroundColor: colors.canvas,
     borderWidth: 1,
     borderColor: colors.line,
     borderRadius: 12,
     paddingHorizontal: 12,
+    backgroundColor: '#FAFAF9',
     height: 46,
-  },
-  phoneInputRow: {
-    flexDirection: 'row',
-    gap: 8,
-  },
-  countryCodeBox: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    backgroundColor: colors.canvas,
-    borderWidth: 1,
-    borderColor: colors.line,
-    borderRadius: 12,
-    paddingHorizontal: 10,
-    width: 80,
-    height: 46,
-  },
-  countryCodeInput: {
-    color: colors.ink,
-    fontSize: 13,
-    fontWeight: '700',
-    flex: 1,
   },
   textInput: {
     flex: 1,
+    fontSize: 14,
     color: colors.ink,
-    fontSize: 13,
-    fontWeight: '600',
-  },
-  otpInput: {
-    letterSpacing: 6,
-    fontSize: 17,
-    fontWeight: '900',
-  },
+    outlineWidth: 0,
+  } as any,
   primaryActionBtn: {
     backgroundColor: colors.teal,
+    borderRadius: 12,
     height: 48,
-    borderRadius: 14,
     alignItems: 'center',
     justifyContent: 'center',
     marginTop: 6,
@@ -855,28 +587,29 @@ const styles = StyleSheet.create({
   primaryActionText: {
     color: '#fff',
     fontSize: 14,
-    fontWeight: '900',
+    fontWeight: '800',
+    letterSpacing: 0.5,
   },
   backBtn: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
     gap: 6,
-    paddingVertical: 8,
+    paddingVertical: 6,
   },
   backBtnText: {
-    color: colors.muted,
     fontSize: 12,
-    fontWeight: '800',
+    fontWeight: '700',
+    color: colors.muted,
   },
   socialSection: {
-    marginTop: 16,
+    marginTop: 18,
+    gap: 12,
   },
   dividerRow: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 10,
-    marginBottom: 12,
   },
   dividerLine: {
     flex: 1,
@@ -884,10 +617,10 @@ const styles = StyleSheet.create({
     backgroundColor: colors.line,
   },
   dividerText: {
-    color: colors.muted,
     fontSize: 10,
-    fontWeight: '900',
-    letterSpacing: 1,
+    fontWeight: '800',
+    color: colors.muted,
+    letterSpacing: 1.1,
   },
   socialBtnRow: {
     flexDirection: 'row',
@@ -898,59 +631,49 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 8,
-    backgroundColor: colors.canvas,
+    gap: 10,
     borderWidth: 1,
     borderColor: colors.line,
-    paddingVertical: 10,
     borderRadius: 12,
+    height: 46,
+    backgroundColor: '#fff',
   },
   socialIconBadge: {
-    width: 20,
-    height: 20,
-    borderRadius: 10,
+    width: 24,
+    height: 24,
+    borderRadius: 12,
     alignItems: 'center',
     justifyContent: 'center',
   },
   socialBadgeText: {
     color: '#fff',
-    fontSize: 11,
+    fontSize: 12,
     fontWeight: '900',
   },
   socialBtnText: {
+    fontSize: 13,
+    fontWeight: '700',
     color: colors.ink,
-    fontSize: 12,
-    fontWeight: '800',
   },
   guestSection: {
     marginTop: 18,
     alignItems: 'center',
-    borderTopWidth: 1,
-    borderTopColor: colors.line,
-    paddingTop: 14,
+    gap: 6,
   },
   guestBtn: {
     paddingVertical: 6,
-    paddingHorizontal: 16,
-  },
-  demoNote: {
-    fontSize: 11,
-    color: colors.muted,
-    textAlign: 'center',
-    marginTop: 8,
-    fontWeight: '500',
   },
   guestBtnText: {
-    color: colors.muted,
     fontSize: 13,
     fontWeight: '800',
+    color: colors.ink,
     textDecorationLine: 'underline',
   },
   privacyGuarantee: {
-    color: colors.muted,
     fontSize: 10,
+    color: colors.muted,
     textAlign: 'center',
     lineHeight: 14,
-    marginTop: 8,
+    maxWidth: 280,
   },
 });
