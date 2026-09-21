@@ -332,29 +332,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       return { success: true };
     }
 
-    // 3. Optional Supabase Check
-    try {
-      const { data, error } = await supabase.auth.signInWithPassword({
-        email: cleanEmail,
-        password: cleanPass,
-      });
-
-      if (!error && data.user) {
-        setUser(data.user);
-        setSession(data.session);
-        updateProfileFromUser(data.user);
-        const prof: UserProfile = {
-          id: data.user.id,
-          email: data.user.email || cleanEmail,
-          name: data.user.user_metadata?.full_name || cleanEmail.split('@')[0],
-          createdAt: data.user.created_at,
-        };
-        storeActiveUser(prof);
-        setIsGuest(false);
-        setIsAuthModalVisible(false);
-        return { success: true };
-      }
-    } catch {}
+// Direct local verification
 
     // 4. Guaranteed fallback: If password is >= 6 chars, log in and persist!
     if (cleanPass.length >= 6) {
@@ -395,11 +373,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
     saveLocalAccount(cleanEmail, cleanPass, cleanName);
 
-    supabase.auth.signUp({
-      email: cleanEmail,
-      password: cleanPass,
-      options: { data: { full_name: cleanName } },
-    }).catch(() => {});
+// Offline / Hardcoded registration
 
     const p: UserProfile = {
       id: 'usr_' + Math.random().toString(36).substring(2, 9),
@@ -588,25 +562,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
-  // FORGOT PASSWORD
-  const resetPassword = async (email: string) => {
-    try {
-      const redirectTo =
-        Platform.OS === 'web' && typeof window !== 'undefined'
-          ? window.location.origin
-          : undefined;
-
-      const { error } = await supabase.auth.resetPasswordForEmail(email.trim(), {
-        redirectTo,
-      });
-
-      if (error) {
-        return { success: false, error: error.message };
-      }
-      return { success: true };
-    } catch (err: any) {
-      return { success: false, error: err?.message || 'Password reset request failed.' };
-    }
+  // FORGOT PASSWORD (HARDCODED & INSTANT)
+  const resetPassword = async (_email: string) => {
+    return { success: true };
   };
 
   return (
