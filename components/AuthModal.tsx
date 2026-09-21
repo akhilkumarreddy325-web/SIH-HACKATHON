@@ -185,8 +185,8 @@ export function AuthModal() {
 
     if (res.success) {
       setIsOtpSent(true);
-      setOtpCode('123456');
-      setSuccessMessage(`Verification code sent to ${fullPhone}! (Code: 123456 auto-filled)`);
+      setOtpCode('');
+      setSuccessMessage(`Original SMS OTP sent to ${fullPhone}! Please enter the 6-digit code received.`);
     } else {
       setErrorMessage(res.error || 'Failed to send OTP.');
     }
@@ -568,7 +568,7 @@ export function AuthModal() {
                 </Pressable>
 
                 <Text style={styles.demoNote}>
-                  Quick Demo: Enter any 10-digit number &bull; OTP is 123456
+                  A 6-digit SMS verification code will be sent to your mobile phone.
                 </Text>
               </View>
             )}
