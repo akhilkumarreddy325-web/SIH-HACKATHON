@@ -1,4 +1,4 @@
-﻿import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   AlertCircle,
   Check,
@@ -53,27 +53,56 @@ export function RouteSearchBar({
 
   // Set default "Current location" if user coordinates exist
   useEffect(() => {
-    if (userCoords && !selectedStart) {
-      const loc: ResolvedLocation = {
-        id: 'user_current_gps',
-        name: 'Current Location',
-        displayName: 'Your Current GPS Location',
-        latitude: userCoords.latitude,
-        longitude: userCoords.longitude,
-        isCurrentLocation: true,
-      };
-      setSelectedStart(loc);
-      setStartQuery('Current location');
+    if (userCoords) {
+      if (!selectedStart || selectedStart.isCurrentLocation) {
+        const loc: ResolvedLocation = {
+          id: 'user_current_gps',
+          name: 'Current location',
+          displayName: 'Your Current GPS Location',
+          latitude: userCoords.latitude,
+          longitude: userCoords.longitude,
+          isCurrentLocation: true,
+        };
+        setSelectedStart(loc);
+        setStartQuery('Current location');
+        setStartError(null);
+      }
     }
   }, [userCoords]);
 
   // Debounced search for Start
   useEffect(() => {
-    if (selectedStart && selectedStart.name === startQuery) {
+    const trimmed = startQuery.trim();
+    if (!trimmed) {
       setStartSuggestions([]);
+      setStartError(null);
       return;
     }
-    if (startQuery.trim().length < 2) {
+
+    // If currently selected start matches query (case-insensitive)
+    if (selectedStart && selectedStart.name.toLowerCase() === trimmed.toLowerCase()) {
+      setStartSuggestions([]);
+      setStartError(null);
+      return;
+    }
+
+    // Direct match for "current location" or "my location"
+    if (trimmed.toLowerCase() === 'current location' || trimmed.toLowerCase() === 'my location') {
+      const loc: ResolvedLocation = {
+        id: 'user_current_gps',
+        name: 'Current location',
+        displayName: 'Your Current GPS Location',
+        latitude: userCoords ? userCoords.latitude : 17.385044,
+        longitude: userCoords ? userCoords.longitude : 78.486671,
+        isCurrentLocation: true,
+      };
+      setSelectedStart(loc);
+      setStartSuggestions([]);
+      setStartError(null);
+      return;
+    }
+
+    if (trimmed.length < 2) {
       setStartSuggestions([]);
       setStartError(null);
       return;
@@ -83,7 +112,7 @@ export function RouteSearchBar({
       setIsSearchingStart(true);
       setStartError(null);
       try {
-        const results = await GeocodingService.searchPlaces(startQuery);
+        const results = await GeocodingService.searchPlaces(trimmed);
         setStartSuggestions(results);
         if (results.length === 0) {
           setStartError('Location not found');
@@ -96,7 +125,7 @@ export function RouteSearchBar({
     }, 350);
 
     return () => clearTimeout(timer);
-  }, [startQuery, selectedStart]);
+  }, [startQuery, selectedStart, userCoords]);
 
   // Debounced search for Destination
   useEffect(() => {
@@ -130,20 +159,19 @@ export function RouteSearchBar({
   }, [destQuery, selectedDest]);
 
   const handleUseCurrentLocation = () => {
-    if (userCoords) {
-      const loc: ResolvedLocation = {
-        id: 'user_current_gps',
-        name: 'Current Location',
-        displayName: 'Your Current GPS Location',
-        latitude: userCoords.latitude,
-        longitude: userCoords.longitude,
-        isCurrentLocation: true,
-      };
-      setSelectedStart(loc);
-      setStartQuery('Current Location');
-      setStartSuggestions([]);
-      setStartError(null);
-    } else if (onRequestUserLocation) {
+    const loc: ResolvedLocation = {
+      id: 'user_current_gps',
+      name: 'Current location',
+      displayName: 'Your Current GPS Location',
+      latitude: userCoords ? userCoords.latitude : 17.385044,
+      longitude: userCoords ? userCoords.longitude : 78.486671,
+      isCurrentLocation: true,
+    };
+    setSelectedStart(loc);
+    setStartQuery('Current location');
+    setStartSuggestions([]);
+    setStartError(null);
+    if (!userCoords && onRequestUserLocation) {
       onRequestUserLocation();
     }
   };
@@ -195,7 +223,7 @@ export function RouteSearchBar({
             value={startQuery}
             onChangeText={(text) => {
               setStartQuery(text);
-              if (selectedStart && selectedStart.name !== text) {
+              if (selectedStart && selectedStart.name.toLowerCase() !== text.trim().toLowerCase()) {
                 setSelectedStart(null);
               }
             }}
@@ -234,7 +262,7 @@ export function RouteSearchBar({
           </View>
         )}
 
-        {startError && (
+        {startError && !selectedStart && (
           <View style={styles.errorRow}>
             <AlertCircle size={13} color={colors.red} />
             <Text style={styles.errorText}>{startError}</Text>
@@ -259,7 +287,7 @@ export function RouteSearchBar({
             value={destQuery}
             onChangeText={(text) => {
               setDestQuery(text);
-              if (selectedDest && selectedDest.name !== text) {
+              if (selectedDest && selectedDest.name.toLowerCase() !== text.trim().toLowerCase()) {
                 setSelectedDest(null);
               }
             }}
