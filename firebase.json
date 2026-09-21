@@ -5,6 +5,13 @@
       "firebase.json",
       "**/.*"
     ],
+    "redirects": [
+      {
+        "source": "/",
+        "destination": "/(tabs)",
+        "type": 302
+      }
+    ],
     "rewrites": [
       {
         "source": "**",
