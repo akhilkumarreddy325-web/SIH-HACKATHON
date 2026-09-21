@@ -1,4 +1,4 @@
-﻿import React, { useState } from 'react';
+import React, { useState } from 'react';
 import {
   AlertCircle,
   ArrowLeft,
@@ -227,14 +227,10 @@ export function AuthModal() {
     }
   };
 
-  return (
-    <Modal
-      visible={isAuthModalVisible}
-      transparent
-      animationType="fade"
-      onRequestClose={handleClose}
-    >
-      <View style={styles.backdrop}>
+  if (!isAuthModalVisible) return null;
+
+  const modalContent = (
+    <View style={[styles.backdrop, Platform.OS === 'web' && ({ position: 'fixed', inset: 0, zIndex: 999999 } as any)]}>
         <View style={[styles.modalCard, shadow]}>
           <ScrollView
             contentContainerStyle={styles.scrollContent}
@@ -621,6 +617,20 @@ export function AuthModal() {
           </ScrollView>
         </View>
       </View>
+  );
+
+  if (Platform.OS === 'web') {
+    return modalContent;
+  }
+
+  return (
+    <Modal
+      visible={isAuthModalVisible}
+      transparent
+      animationType="fade"
+      onRequestClose={handleClose}
+    >
+      {modalContent}
     </Modal>
   );
 }
