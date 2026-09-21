@@ -2,6 +2,13 @@
 import { Platform } from 'react-native';
 import { Session, User } from '@supabase/supabase-js';
 import { supabase } from '@/lib/supabase';
+import {
+  auth as firebaseAuth,
+  googleProvider as firebaseGoogleProvider,
+  signInWithPopup as firebaseSignInWithPopup,
+  firebaseSignOut,
+  onAuthStateChanged as onFirebaseAuthStateChanged,
+} from '@/lib/firebase';
 
 export interface UserProfile {
   id: string;
@@ -138,9 +145,41 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       setIsLoading(false);
     });
 
+    
+    // 3. Firebase Auth State Change Listener (Restores Google login on reload)
+    const unsubscribeFirebase = onFirebaseAuthStateChanged(firebaseAuth, (fbUser) => {
+      if (!mounted) return;
+      if (fbUser) {
+        const p = {
+          id: fbUser.uid,
+          email: fbUser.email || '',
+          name: fbUser.displayName || (fbUser.email ? fbUser.email.split('@')[0] : 'Safe Traveler'),
+          avatarUrl: fbUser.photoURL || undefined,
+          createdAt: fbUser.metadata.creationTime,
+        };
+        setUser({
+          id: fbUser.uid,
+          app_metadata: {},
+          user_metadata: {
+            full_name: p.name,
+            avatar_url: p.avatarUrl,
+          },
+          aud: 'authenticated',
+          created_at: fbUser.metadata.creationTime || new Date().toISOString(),
+          email: fbUser.email || undefined,
+          phone: fbUser.phoneNumber || undefined,
+        } as any);
+        setProfile(p);
+        setIsGuest(false);
+        setIsAuthModalVisible(false);
+        setIsLoading(false);
+      }
+    });
+
     return () => {
       mounted = false;
       subscription.unsubscribe();
+      unsubscribeFirebase();
     };
   }, []);
 
@@ -354,7 +393,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   // LOGOUT
   const signOut = async () => {
     try {
-      await supabase.auth.signOut();
+      await Promise.allSettled([supabase.auth.signOut(), firebaseSignOut(firebaseAuth)]);
       setUser(null);
       setSession(null);
       setProfile(null);
